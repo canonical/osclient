@@ -90,7 +90,8 @@ document is tagged `triage.layer: -1` (a sentinel meaning "untriaged").
 The operations, mirroring the process above:
 
 - identify a set by writing a SQL `WHERE` predicate, which the SQL engine's
-  `_explain` turns into the query DSL the tool actually runs
+  `_explain` turns into the query DSL the tool actually runs (see
+  [SQL `_explain`](sql-explain.md))
 - set it aside with a single `_update_by_query` that stamps the layer number, the
   predicate, and the rationale onto the matches, touching only documents still
   tagged `-1`

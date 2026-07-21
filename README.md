@@ -32,6 +32,8 @@ Runtime dependencies: `requests`, `PyYAML`.
 
 - [Library](docs/library.md): the client API and connection helpers.
 - [CLI](docs/cli.md): the `osclient query` and `osclient triage` subcommands.
+- [SQL `_explain`](docs/sql-explain.md): the `_explain` output the triage
+  predicate translation parses.
 
 ## Roadmap
 
