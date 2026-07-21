@@ -1,0 +1,87 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+#######################################
+# PACKAGE                             #
+#######################################
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "osclient"
+version = "0.1.0"
+description = "OpenSearch client library."
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "PyYAML",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+osclient = "osclient.cli.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/osclient"]
+
+
+#######################################
+# TOX/TEST CONFIGS                    #
+#######################################
+
+[tool.tox]
+requires = ["tox>=4.57"]
+env_list = ["lint", "type", "unit"]
+
+[tool.tox.env.lint]
+description = "Run lint checks"
+allowlist_externals = ["sh"]
+skip_install = true
+recreate = true
+deps = ["ruff==0.15.20"]
+commands = [
+    ["sh", "tests/lint/ascii-check.sh"],
+    ["ruff", "check", "{tox_root}/src", "{tox_root}/tests"],
+    ["ruff", "format", "--check", "{tox_root}/src", "{tox_root}/tests"],
+]
+
+[tool.tox.env.type]
+description = "Type-check with basedpyright"
+recreate = true
+deps = [
+  "basedpyright==1.39.9",
+  "pytest==9.1.1",
+]
+commands = [["basedpyright", "{tox_root}/src", "{tox_root}/tests"]]
+
+[tool.tox.env.unit]
+description = "Run the unit test suite"
+deps = ["pytest"]
+commands = [["pytest", "-s", "tests/unit/"]]
+
+[tool.tox.env.functional]
+description = "Run functional tests against a live OpenSearch cluster (see tests/functional/)"
+deps = ["pytest"]
+pass_env = [
+    "OPENSEARCH_URL",
+    "OPENSEARCH_HOST",
+    "OPENSEARCH_PORT",
+    "OPENSEARCH_USER",
+    "OPENSEARCH_PASSWORD",
+    "OPENSEARCH_CA_CERT",
+    "OPENSEARCH_INSECURE",
+    "OPENSEARCH_INDEX",
+]
+commands = [["pytest", "-s", "tests/functional/"]]
+
+
+#######################################
+# TOOL CONFIGS                        #
+#######################################
+
+[tool.pyright]
+typeCheckingMode = "standard"

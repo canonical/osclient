@@ -1,0 +1,30 @@
+# Ephemeral single-node OpenSearch used by the functional tests. It keeps no
+# state on the host: `docker compose down -v` (see run.sh) removes the container,
+# network, and any anonymous volumes. The image tag is pinned so local and CI
+# runs are identical.
+#
+# The security plugin is enabled (demo configuration) so the tests exercise HTTP
+# Basic authentication. Its admin password is set with
+# OPENSEARCH_INITIAL_ADMIN_PASSWORD (required since 2.12); run.sh generates that
+# value and exports it before invoking compose, so running compose directly
+# without it fails with the message below. TLS is disabled on the REST layer
+# (plugins.security.ssl.http.enabled=false) so the client connects over plain
+# HTTP with a username and password.
+services:
+  opensearch:
+    image: opensearchproject/opensearch:2.19.1
+    environment:
+      - discovery.type=single-node
+      - plugins.security.ssl.http.enabled=false
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:?run via run.sh}"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "9200:9200"

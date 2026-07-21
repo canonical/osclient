@@ -1,0 +1,173 @@
+# CLI
+
+The `osclient` package offers a single CLI entry point, `osclient`, with
+subcommands.
+
+## Usage
+
+Every invocation has the form:
+
+```
+osclient <subcommand> [options]
+```
+
+There are two subcommands: `query`, for one-off read-only queries, and `triage`,
+for the guided threat-hunt workflow. Results are printed as YAML on stdout;
+failures are reported on stderr with a non-zero exit status.
+
+The connection is resolved from the `OPENSEARCH_*` environment variables (see
+[Library](library.md)), so no credentials ever appear on the command line.
+
+## `osclient query`
+
+`query` runs a single read-only operation and prints the result as YAML.
+
+Run a SQL query:
+
+```
+osclient query --sql "SELECT rule.level FROM logs-* LIMIT 5"
+```
+
+Run a PPL query:
+
+```
+osclient query --ppl "source=logs-* | head 5"
+```
+
+Show a SQL query's execution plan (the pushed-down DSL) without running it:
+
+```
+osclient query --explain "SELECT * FROM logs-* WHERE rule.level < 3"
+```
+
+Report the OpenSearch and installed-plugin versions:
+
+```
+osclient query --versions
+```
+
+Show the mapping for one or more fields (wildcards allowed). An empty result
+means the field is unmapped, and therefore cannot be queried by SQL or a term
+filter even when it appears in a document's `_source`:
+
+```
+osclient query --mapping "data.event.*"
+```
+
+Return the newest documents matching a set of exact `field=value` terms, most
+recent first. `--count` controls how many are returned:
+
+```
+osclient query --search rule.id=5710 agent.name=web01 --count 3
+```
+
+## `osclient triage`
+
+### What triage does
+
+`triage` supports a layered-elimination threat hunt: instead of searching for a
+needle in a haystack, eliminate the haystack.
+
+The process:
+
+- identify a set of documents you can explain (routine noise, known-good
+  activity, an expected job, etc.)
+- set them aside
+- repeat until the remaining dataset can be reviewed manually
+
+Each dataset you remove is labeled with a 'layer' number. Every document records
+the layer that removed it, the query that selected it, and a short rationale.
+That makes the hunt auditable: afterwards anyone can see exactly which logs were
+eliminated, by what reasoning, and in what order.
+
+### How it maps to OpenSearch
+
+Each step runs through the client as an OpenSearch operation, all on a scratch
+copy so the source data is never touched: the logs of interest are first copied
+into a fresh, writable index with a server-side `_reindex`, and every copied
+document is tagged `triage.layer: -1` (a sentinel meaning "untriaged").
+
+The operations, mirroring the process above:
+
+- identify a set by writing a SQL `WHERE` predicate, which the SQL engine's
+  `_explain` turns into the query DSL the tool actually runs
+- set it aside with a single `_update_by_query` that stamps the layer number, the
+  predicate, and the rationale onto the matches, touching only documents still
+  tagged `-1`
+- repeat, reading back each pass's progress with a `size: 0` aggregation over
+  `triage.layer`: how many documents are still `-1` versus how many sit in each
+  eliminated layer
+
+Because the layer, predicate, and rationale are written onto every eliminated
+document, the audit trail the process promises lives in the data itself.
+
+### How the tool performs those actions
+
+You never issue those OpenSearch calls yourself; three subcommands drive them,
+with guardrails:
+
+- `init` creates the scratch index (with an explicit triage-field mapping) and
+  runs the reindex, polling the async task to completion so a large copy does
+  not hit a request timeout.
+- `eliminate` translates your predicate, cross-checks the translation (see
+  below), and, on `--apply`, runs the tagging `_update_by_query`, again polling
+  to completion.
+- `status` runs the aggregation and prints the per-layer breakdown.
+
+Before tagging anything, `eliminate` cross-checks its work: it confirms the
+translated DSL matches exactly as many documents as `SELECT COUNT(*)` for the
+same predicate, and refuses if the two disagree, rather than risk tagging a set
+the predicate did not mean. Without `--apply` it is a dry run that only reports
+counts, the translated DSL, and a sample.
+
+The triage index is always named explicitly with `--index` / `--dest`; it is
+never taken from `OPENSEARCH_INDEX`, so a wildcard or the wrong index can never
+be tagged by accident.
+
+### The workflow
+
+Copy the logs of interest into a fresh index, tagging every document untriaged.
+The source index is only read, never modified:
+
+```
+osclient triage init --source logs-2026.07.14 --dest triage-hunt-001
+```
+
+Review the copied index (for example in a dashboard), pick a set you can
+explain, and dry-run its elimination. `--where` takes a SQL `WHERE` predicate;
+nothing is written without `--apply`. The dry run reports how many documents
+match, how many are still untriaged (and so would be tagged), the translated
+DSL, and a sample:
+
+```
+osclient triage eliminate --index triage-hunt-001 --layer 1 --where "rule.level < 3" --explanation "informational, below alert threshold"
+```
+
+When the counts look right, re-run the same command with `--apply` to write the
+tags:
+
+```
+osclient triage eliminate --index triage-hunt-001 --layer 1 --where "rule.level < 3" --explanation "informational, below alert threshold" --apply
+```
+
+Check what remains, then repeat the review-and-eliminate step until the
+untriaged count reaches zero. Omit `--layer` and each elimination
+auto-increments to the next layer (2, 3, ...):
+
+```
+osclient triage status --index triage-hunt-001
+```
+
+### Predicate quoting
+
+String literals in a predicate use single quotes and field names use backticks,
+for example `` `event.action` = 'delivery' ``. Because backticks trigger command
+substitution inside a double-quoted shell argument, either wrap the whole
+predicate in single quotes, or pass `--where -` to read the predicate from stdin
+and avoid shell quoting entirely:
+
+```
+osclient triage eliminate --index triage-hunt-001 --layer 1 --explanation "received emails" --where - <<'EOF'
+`event.action` = 'delivery' AND `message` = 'Message received'
+EOF
+```

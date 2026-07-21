@@ -1,0 +1,128 @@
+# Copyright 2026 Canonical Ltd.
+# See LICENSE file for licensing details.
+
+"""Functional tests for osclient against a live OpenSearch cluster.
+
+These require a running OpenSearch reachable via the ``OPENSEARCH_*`` environment
+variables (``OPENSEARCH_URL``, ``OPENSEARCH_USER``, ``OPENSEARCH_PASSWORD``); when
+any is unset the whole module is skipped, so a plain ``tox`` run without a cluster
+stays green. ``tests/functional/run.sh`` starts an ephemeral Docker cluster, sets
+the variables, runs these tests, and tears everything down.
+"""
+
+import contextlib
+import os
+import uuid
+from typing import Iterator
+
+import pytest
+
+from osclient import OpensearchClient, triage
+from osclient.config import client_from_env
+
+if not (
+    os.environ.get("OPENSEARCH_URL")
+    and os.environ.get("OPENSEARCH_USER")
+    and os.environ.get("OPENSEARCH_PASSWORD")
+):
+    pytest.skip(
+        "OPENSEARCH_URL, OPENSEARCH_USER, and OPENSEARCH_PASSWORD must be set; "
+        "no OpenSearch cluster available",
+        allow_module_level=True,
+    )
+
+
+def _build_client() -> OpensearchClient:
+    """Build the client, asserting it is configured (the skip guard ran above).
+
+    The non-optional return type narrows ``_client`` to ``OpensearchClient`` for
+    every test function, unlike a module-level assert which narrows only here.
+    """
+    client = client_from_env()
+    assert client is not None, "OPENSEARCH_* is set but client_from_env returned None"
+    return client
+
+
+_client = _build_client()
+
+
+@contextlib.contextmanager
+def _temporary_indices(*names: str) -> Iterator[None]:
+    """Delete the named indices on exit, whether the test passes or fails."""
+    try:
+        yield
+    finally:
+        for name in names:
+            _client.request("DELETE", name)
+
+
+def _unique(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def test_index_and_read_back() -> None:
+    index = _unique("osclient-func")
+    with _temporary_indices(index):
+        assert _client.create_index(
+            {"mappings": {"properties": {"name": {"type": "keyword"}}}}, index=index
+        ).ok
+        for i, name in enumerate(["a", "b", "c"]):
+            assert _client.index_document(
+                {"name": name, "n": i}, index=index, refresh=True
+            ).ok
+
+        search = _client.search({"query": {"match_all": {}}}, index=index)
+        assert search
+        assert len(search.data) == 3
+
+        count = _client.count({"match_all": {}}, index=index)
+        assert count
+        assert count.data == 3
+
+        rows = _client.sql(f"SELECT name FROM {index} ORDER BY n")
+        assert rows
+        assert [row["name"] for row in rows.data] == ["a", "b", "c"]
+
+
+def test_triage_workflow_eliminates_a_layer() -> None:
+    source = _unique("osclient-func-src")
+    dest = _unique("osclient-func-triage")
+    with _temporary_indices(source, dest):
+        assert _client.create_index(
+            {
+                "mappings": {
+                    "properties": {
+                        "rule": {"properties": {"level": {"type": "integer"}}}
+                    }
+                }
+            },
+            index=source,
+        ).ok
+        for level in [1, 1, 1, 10, 10]:
+            assert _client.index_document(
+                {"rule": {"level": level}}, index=source, refresh=True
+            ).ok
+
+        # init copies the source into a fresh triage index, all untriaged.
+        summary = triage.init(_client, source, dest, poll_seconds=0.5)
+        assert summary["total"] == 5
+        assert summary["tagged_untriaged"] == 5
+        assert triage.status(_client, dest)["untriaged"] == 5
+
+        # eliminate tags the low-severity docs (SQL predicate pushed down to DSL).
+        # layer=None exercises the auto-increment branch; on a fresh index it is 1.
+        result = triage.eliminate(
+            _client,
+            dest,
+            "rule.level < 3",
+            None,
+            "low severity",
+            apply=True,
+            at="2026-07-20T00:00:00.000Z",
+        )
+        assert result["updated"] == 3
+        assert result["layer"] == 1
+
+        after = triage.status(_client, dest)
+        assert after["untriaged"] == 2
+        assert after["eliminated_by_layer"] == {1: 3}
