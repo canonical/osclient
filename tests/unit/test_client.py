@@ -42,15 +42,45 @@ def test_helpers_build_the_expected_request() -> None:
     # (call, method, path, expected body or None to skip the body check)
     cases: list[tuple[Callable[[OpensearchClient], object], str, str, Any]] = [
         (lambda c: c.field_mapping("f", index="i"), "GET", "i/_mapping/field/f", None),
+        (
+            lambda c: c.explain("SELECT 1"),
+            "POST",
+            "_plugins/_sql/_explain",
+            {"query": "SELECT 1"},
+        ),
+        (
+            lambda c: c.explain("source=x", query_type="ppl"),
+            "POST",
+            "_plugins/_ppl/_explain",
+            {"query": "source=x"},
+        ),
         (lambda c: c.create_index({"m": 1}, index="i"), "PUT", "i", {"m": 1}),
-        (lambda c: c.index_document(doc, index="i", refresh=True), "POST", "i/_doc?refresh=true", doc),
-        (lambda c: c.index_document(doc, index="i", doc_id="42"), "PUT", "i/_doc/42", doc),
-        (lambda c: c.reindex("s", "d", script=script, wait_for_completion=False, refresh=True),
-         "POST", "_reindex?wait_for_completion=false&refresh=true",
-         {"source": {"index": "s"}, "dest": {"index": "d"}, "script": script}),
-        (lambda c: c.update_by_query({"q": 1}, index="i", conflicts="proceed"),
-         "POST", "i/_update_by_query?conflicts=proceed&wait_for_completion=true&refresh=false",
-         {"query": {"q": 1}}),
+        (
+            lambda c: c.index_document(doc, index="i", refresh=True),
+            "POST",
+            "i/_doc?refresh=true",
+            doc,
+        ),
+        (
+            lambda c: c.index_document(doc, index="i", doc_id="42"),
+            "PUT",
+            "i/_doc/42",
+            doc,
+        ),
+        (
+            lambda c: c.reindex(
+                "s", "d", script=script, wait_for_completion=False, refresh=True
+            ),
+            "POST",
+            "_reindex?wait_for_completion=false&refresh=true",
+            {"source": {"index": "s"}, "dest": {"index": "d"}, "script": script},
+        ),
+        (
+            lambda c: c.update_by_query({"q": 1}, index="i", conflicts="proceed"),
+            "POST",
+            "i/_update_by_query?conflicts=proceed&wait_for_completion=true&refresh=false",
+            {"query": {"q": 1}},
+        ),
     ]
     for call, method, path, body in cases:
         transport = FakeTransport(Success({}))
@@ -62,7 +92,11 @@ def test_helpers_build_the_expected_request() -> None:
 
 
 def test_default_index_is_used_and_can_be_overridden() -> None:
-    assert OpensearchClient(FakeTransport(Success({}))).default_index == DEFAULT_INDEX == "*"
+    assert (
+        OpensearchClient(FakeTransport(Success({}))).default_index
+        == DEFAULT_INDEX
+        == "*"
+    )
     transport = FakeTransport(Success({"hits": {"hits": []}}))
     client = OpensearchClient(transport, default_index="logs-*")
     client.search({"q": 1})
@@ -79,11 +113,16 @@ def test_search_extracts_each_hit_source() -> None:
 
 def test_version_helpers_process_cat_output() -> None:
     nodes = [{"version": "2.19.1"}, {"version": "2.19.1"}, {"version": "2.18.0"}]
-    assert OpensearchClient(FakeTransport(Success(nodes))).opensearch_version().data == [
+    assert OpensearchClient(
+        FakeTransport(Success(nodes))
+    ).opensearch_version().data == [
         "2.18.0",
         "2.19.1",
     ]
-    plugins = [{"component": "sql", "version": "1"}, {"component": "sec", "version": "2"}]
+    plugins = [
+        {"component": "sql", "version": "1"},
+        {"component": "sec", "version": "2"},
+    ]
     assert OpensearchClient(FakeTransport(Success(plugins))).plugin_versions().data == {
         "sql": "1",
         "sec": "2",

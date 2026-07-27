@@ -119,9 +119,14 @@ class OpensearchClient:
             return res
         return Success(rows_from_sql_response(res.data))
 
-    def explain(self, sql_query: str) -> OpensearchResult[dict[str, Any]]:
-        """Return the SQL execution plan (the pushed-down query DSL), unexecuted."""
-        return self.request("POST", "_plugins/_sql/_explain", {"query": sql_query})
+    def explain(
+        self, query: str, query_type: str = "sql"
+    ) -> OpensearchResult[dict[str, Any]]:
+        """Return the SQL execution plan (the pushed-down query DSL), unexecuted.
+
+        query_type must be one of: sql, ppl.
+        """
+        return self.request("POST", f"_plugins/{query_type}/_explain", {"query": query})
 
     def get_mapping(self, index: str | None = None) -> OpensearchResult[dict[str, Any]]:
         """Return the full mapping for the index (or pattern)."""

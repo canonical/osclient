@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from osclient.result import OpensearchResult
+
 FORMATS = ("yaml", "json", "csv", "tsv")
 DEFAULT_FORMAT = "yaml"
 
@@ -106,3 +108,11 @@ def render(data: Any, fmt: str) -> str:
     if fmt == "tsv":
         return _delimited(data, "\t")
     raise ValueError(f"unknown format: {fmt!r}")
+
+
+def emit(result: OpensearchResult[Any], label: str, fmt: str) -> None:
+    """Print a result's data in the chosen format, or log its reason and exit 1."""
+    if not result.ok:
+        logging.error(f"{label} failed: {result.reason}")
+        sys.exit(1)
+    print(render(result.data, fmt))

@@ -1,7 +1,6 @@
 # CLI
 
-The `osclient` package offers a single CLI entry point, `osclient`, with
-subcommands.
+The `osclient` package offers a CLI entry point, `osclient`, with subcommands.
 
 ## Usage
 
@@ -11,9 +10,16 @@ Every invocation has the form:
 osclient <subcommand> [options]
 ```
 
-There are two subcommands: `query`, for one-off read-only queries, and `triage`,
-for the guided threat-hunt workflow. Results are printed as YAML on stdout;
-failures are reported on stderr with a non-zero exit status.
+The subcommands are:
+
+- `query`: run a SQL, PPL, or raw-DSL query
+- `search`: a term-lookup convenience
+- `index`: index-level operations
+- `cluster`: cluster-level inspection
+- `triage`: the guided threat-hunt workflow
+
+By default, results are printed as YAML on stdout; failures are reported on
+stderr with a non-zero exit status.
 
 The connection is resolved from the `OPENSEARCH_*` environment variables (see
 [Library](library.md)), so no credentials ever appear on the command line.
@@ -24,77 +30,86 @@ Every command that prints data takes `--format`, one of `yaml` (the default),
 `json`, `csv`, or `tsv`:
 
 ```
-osclient query --sql "SELECT client_ip FROM logs-*" --format json | jq '.[].client_ip'
-osclient query --sql "SELECT client_ip FROM logs-*" --format csv > stack.csv
-osclient query --sql "SELECT client_ip FROM logs-*" --format tsv | column -t
+osclient query sql "SELECT client_ip FROM logs-*" --format json | jq '.[].client_ip'
+osclient query sql "SELECT client_ip FROM logs-*" --format csv > stack.csv
+osclient query sql "SELECT client_ip FROM logs-*" --format tsv | column -t
 ```
 
 The tabular formats (`csv`, `tsv`) render one record per row. Nested objects
 become dotted column names (`source.ip`), and the header is the union of every
 record's keys, with a blank cell where a record lacks one. A list value is
 written into its cell as JSON. A result that is a single object (such as
-`--versions` or a triage summary) is rendered as a one-row table.
+`cluster versions` or a triage summary) is rendered as a one-row table.
 
 ## `osclient query`
 
-`query` runs a single read-only operation and prints the result as YAML.
+`query` runs a query in a chosen language and prints the result as YAML. Each
+`<query>` may be given literally, as `-` to read it from stdin, or as `@PATH` to
+read it from a file.
 
-Run a SQL query:
-
-```
-osclient query --sql "SELECT rule.level FROM logs-* LIMIT 5"
-```
-
-Run a PPL query:
+Run a SQL query. `--explain` prints its execution plan (the pushed-down DSL)
+instead of running it:
 
 ```
-osclient query --ppl "source=logs-* | head 5"
-```
-
-Show a SQL query's execution plan (the pushed-down DSL) without running it:
-
-```
-osclient query --explain "SELECT * FROM logs-* WHERE rule.level < 3"
-```
-
-Report the OpenSearch and installed-plugin versions:
-
-```
-osclient query --versions
-```
-
-Show the mapping for one or more fields (wildcards allowed). An empty result
-means the field is unmapped, and therefore cannot be queried by SQL or a term
-filter even when it appears in a document's `_source`:
-
-```
-osclient query --mapping "data.event.*"
-```
-
-Return the newest documents matching a set of exact `field=value` terms, most
-recent first. `--count` controls how many are returned:
-
-```
-osclient query --search rule.id=5710 agent.name=web01 --count 3
-```
-
-### Query formats
-
-`--sql`, `--ppl`, and `--explain` queries can be provided in three ways:
-
-- a literal string
-- a path to a file, expressed as `@path`
-- from `stdin`, signalled via `-`
-
-Examples:
-
-```
-osclient query --sql @failed-logins.sql
-osclient query --sql - <<'EOF'
+osclient query sql "SELECT rule.level FROM logs-* LIMIT 5"
+osclient query sql --explain "SELECT * FROM logs-* WHERE rule.level < 3"
+osclient query sql @failed-logins.sql
+osclient query sql - <<'EOF'
 SELECT client_ip, COUNT(*) FROM logs-*
 WHERE `event.outcome` = 'failure'
 GROUP BY client_ip
 EOF
+```
+
+Run a PPL query; `--explain` works here too:
+
+```
+osclient query ppl "source=logs-* | head 5"
+osclient query ppl --explain "source=logs-* | where rule.level > 10"
+```
+
+Run a raw query DSL: a bare query object, or a full `_search` body (detected by
+a top-level `query` key). Add `--count-only` to return just the number of
+matching documents, routed to `_count` (so `size`, `sort`, and any aggregations
+in the body are ignored):
+
+```
+osclient query dsl '{"query": {"bool": {"must": [{"term": {"event.action": "logon"}}]}}}'
+osclient query dsl @rules/compiled/lateral-movement.json
+osclient query dsl @rule.json --count-only
+```
+
+## `osclient search`
+
+`search` finds the newest documents matching a set of exact `field=value` terms,
+ANDed together, most recent first. `--count` controls how many are returned;
+`--count-only` prints just the number of matches (via `_count`):
+
+```
+osclient search rule.id=5710 agent.name=web01 --count 3
+osclient search source.ip=10.0.0.5 --count-only
+```
+
+## `osclient index`
+
+`index` groups index-level operations. `mapping` shows the mapping for one or
+more fields (comma-separated, wildcards allowed). An empty result means the
+field is unmapped, and therefore cannot be queried by SQL or a term filter even
+when it appears in a document's `_source`. `--index` overrides the configured
+`OPENSEARCH_INDEX`:
+
+```
+osclient index mapping "data.event.*"
+osclient index mapping source.ip --index logs-2026.07.14
+```
+
+## `osclient cluster`
+
+`cluster` groups cluster-level inspection. `versions` reports the OpenSearch and
+installed-plugin versions:
+
+```
+osclient cluster versions
 ```
 
 ## `osclient triage`

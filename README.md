@@ -25,13 +25,13 @@ Runtime dependencies: `requests`, `PyYAML`.
 - a Python library for querying an OpenSearch cluster (directly, or through a
   dashboard console proxy as a fallback), where every call returns an
   `OpensearchResult` (`ok` / `data` / `reason`) rather than raising; and
-- a single `osclient` command-line tool with `query` (read-only SQL, PPL, and
-  term queries) and `triage` (layered threat-hunt) subcommands.
+- an `osclient` command-line tool
 
 ## Documentation
 
 - [Library](docs/library.md): the client API and connection helpers.
-- [CLI](docs/cli.md): the `osclient query` and `osclient triage` subcommands.
+- [CLI](docs/cli.md): the CLI subcommands, including `query`, `search`, `index`,
+  `cluster`, and `triage`.
 - [SQL `_explain`](docs/sql-explain.md): the `_explain` output the triage
   predicate translation parses.
 
