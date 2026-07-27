@@ -15,9 +15,8 @@ wildcard) index by accident.
 import sys
 from argparse import Namespace, _SubParsersAction
 
-import yaml
-
 from osclient import triage
+from osclient.cli import output
 from osclient.config import client_from_env
 
 NAME = "triage"
@@ -45,13 +44,15 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         required=True,
         help="destination triage index to create (must not already exist)",
     )
+    output.add_format_argument(init_parser)
 
     status_parser = verbs.add_parser(
-        "status", help="print triage progress (counts by layer) as YAML, and exit"
+        "status", help="print triage progress (counts by layer), and exit"
     )
     status_parser.add_argument(
         "--index", required=True, help="the triage index to summarize"
     )
+    output.add_format_argument(status_parser)
 
     elim = verbs.add_parser(
         "eliminate",
@@ -83,6 +84,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="actually write the tags; without it, only a dry-run count and sample",
     )
+    output.add_format_argument(elim)
 
 
 def run(args: Namespace) -> None:
@@ -94,4 +96,4 @@ def run(args: Namespace) -> None:
     if not result.ok:
         print(f"error: {args.command} failed: {result.reason}", file=sys.stderr)
         sys.exit(1)
-    print(yaml.dump(result.data, indent=2, sort_keys=False))
+    print(output.render(result.data, args.format))

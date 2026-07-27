@@ -18,6 +18,23 @@ failures are reported on stderr with a non-zero exit status.
 The connection is resolved from the `OPENSEARCH_*` environment variables (see
 [Library](library.md)), so no credentials ever appear on the command line.
 
+## Output format
+
+Every command that prints data takes `--format`, one of `yaml` (the default),
+`json`, `csv`, or `tsv`:
+
+```
+osclient query --sql "SELECT client_ip FROM logs-*" --format json | jq '.[].client_ip'
+osclient query --sql "SELECT client_ip FROM logs-*" --format csv > stack.csv
+osclient query --sql "SELECT client_ip FROM logs-*" --format tsv | column -t
+```
+
+The tabular formats (`csv`, `tsv`) render one record per row. Nested objects
+become dotted column names (`source.ip`), and the header is the union of every
+record's keys, with a blank cell where a record lacks one. A list value is
+written into its cell as JSON. A result that is a single object (such as
+`--versions` or a triage summary) is rendered as a one-row table.
+
 ## `osclient query`
 
 `query` runs a single read-only operation and prints the result as YAML.
@@ -92,9 +109,9 @@ The operations, mirroring the process above:
 - identify a set by writing a SQL `WHERE` predicate, which the SQL engine's
   `_explain` turns into the query DSL the tool actually runs (see
   [SQL `_explain`](sql-explain.md))
-- set it aside with a single `_update_by_query` that stamps the layer number, the
-  predicate, and the rationale onto the matches, touching only documents still
-  tagged `-1`
+- set it aside with a single `_update_by_query` that stamps the layer number,
+  the predicate, and the rationale onto the matches, touching only documents
+  still tagged `-1`
 - repeat, reading back each pass's progress with a `size: 0` aggregation over
   `triage.layer`: how many documents are still `-1` versus how many sit in each
   eliminated layer

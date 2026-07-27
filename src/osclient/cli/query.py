@@ -20,8 +20,7 @@ import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
-import yaml
-
+from osclient.cli import output
 from osclient.client import OpensearchClient
 from osclient.config import client_from_env
 from osclient.result import OpensearchResult
@@ -72,6 +71,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         default=1,
         help="number of most-recent results to return in --search mode (default: 1)",
     )
+    output.add_format_argument(parser)
 
 
 def get_versions(client: OpensearchClient) -> dict[str, Any]:
@@ -114,12 +114,12 @@ def build_term_search(terms: list[tuple[str, list[str]]], size: int) -> dict[str
     }
 
 
-def _emit(res: OpensearchResult[Any], label: str) -> None:
-    """Print a result's data as YAML, or log its reason and exit 1."""
+def _emit(res: OpensearchResult[Any], label: str, fmt: str) -> None:
+    """Print a result's data in the chosen format, or log its reason and exit 1."""
     if not res.ok:
         logging.error(f"{label} failed: {res.reason}")
         sys.exit(1)
-    print(yaml.dump(res.data, indent=2))
+    print(output.render(res.data, fmt))
 
 
 def run(args: Namespace) -> None:
@@ -129,19 +129,19 @@ def run(args: Namespace) -> None:
         sys.exit(2)
 
     if args.sql:
-        _emit(client.sql(args.sql), "SQL query")
+        _emit(client.sql(args.sql), "SQL query", args.format)
         return
     if args.ppl:
-        _emit(client.ppl(args.ppl), "PPL query")
+        _emit(client.ppl(args.ppl), "PPL query", args.format)
         return
     if args.explain:
-        _emit(client.explain(args.explain), "Explain")
+        _emit(client.explain(args.explain), "Explain", args.format)
         return
     if args.versions:
-        print(yaml.dump(get_versions(client), indent=2))
+        print(output.render(get_versions(client), args.format))
         return
     if args.mapping:
-        _emit(client.field_mapping(args.mapping), "Field mapping")
+        _emit(client.field_mapping(args.mapping), "Field mapping", args.format)
         return
 
     terms: list[tuple[str, list[str]]] = []
@@ -151,4 +151,6 @@ def run(args: Namespace) -> None:
             sys.exit(2)
         field, value = token.split("=", 1)
         terms.append((field, [value]))
-    _emit(client.search(build_term_search(terms, size=args.count)), "Search")
+    _emit(
+        client.search(build_term_search(terms, size=args.count)), "Search", args.format
+    )
