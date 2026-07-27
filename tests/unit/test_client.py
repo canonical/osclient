@@ -42,6 +42,13 @@ def test_helpers_build_the_expected_request() -> None:
     # (call, method, path, expected body or None to skip the body check)
     cases: list[tuple[Callable[[OpensearchClient], object], str, str, Any]] = [
         (lambda c: c.field_mapping("f", index="i"), "GET", "i/_mapping/field/f", None),
+        (lambda c: c.sql("SELECT 1"), "POST", "_plugins/_sql", {"query": "SELECT 1"}),
+        (
+            lambda c: c.sql("SELECT 1", {"range": {"@timestamp": {"gte": "X"}}}),
+            "POST",
+            "_plugins/_sql",
+            {"query": "SELECT 1", "filter": {"range": {"@timestamp": {"gte": "X"}}}},
+        ),
         (
             lambda c: c.explain("SELECT 1"),
             "POST",

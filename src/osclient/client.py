@@ -101,13 +101,23 @@ class OpensearchClient:
             return res
         return Success(res.data.get("count", 0))
 
-    def sql_raw(self, sql_query: str) -> OpensearchResult[dict[str, Any]]:
-        """Run a SQL query and return the raw jdbc response (schema + datarows)."""
-        return self.request("POST", "_plugins/_sql", {"query": sql_query})
+    def sql_raw(
+        self, sql_query: str, filter_dsl: dict[str, Any] | None = None
+    ) -> OpensearchResult[dict[str, Any]]:
+        """Run a SQL query and return the raw jdbc response (schema + datarows).
 
-    def sql(self, sql_query: str) -> OpensearchResult:
+        ``filter_dsl`` is an optional query DSL the SQL engine ANDs with the query.
+        """
+        body: dict[str, Any] = {"query": sql_query}
+        if filter_dsl is not None:
+            body["filter"] = filter_dsl
+        return self.request("POST", "_plugins/_sql", body)
+
+    def sql(
+        self, sql_query: str, filter_dsl: dict[str, Any] | None = None
+    ) -> OpensearchResult:
         """Run a SQL query against the index, returning the rows as dicts."""
-        res = self.sql_raw(sql_query)
+        res = self.sql_raw(sql_query, filter_dsl)
         if not res:
             return res
         return Success(rows_from_sql_response(res.data))
@@ -126,7 +136,9 @@ class OpensearchClient:
 
         query_type must be one of: sql, ppl.
         """
-        return self.request("POST", f"_plugins/{query_type}/_explain", {"query": query})
+        return self.request(
+            "POST", f"_plugins/_{query_type}/_explain", {"query": query}
+        )
 
     def get_mapping(self, index: str | None = None) -> OpensearchResult[dict[str, Any]]:
         """Return the full mapping for the index (or pattern)."""

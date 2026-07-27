@@ -6,8 +6,10 @@
 import csv
 import json
 import logging
+import re
 import sys
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from typing import Any
 
@@ -17,6 +19,12 @@ from osclient.result import OpensearchResult
 
 FORMATS = ("yaml", "json", "csv", "tsv")
 DEFAULT_FORMAT = "yaml"
+
+DEFAULT_TIME_FIELD = "@timestamp"
+
+# A relative time offset like -24h or -7d: a minus, a count, and a unit.
+_OFFSET = re.compile(r"^-(\d+)([smhdw])$")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 
 def add_format_argument(parser: ArgumentParser) -> None:
@@ -54,6 +62,60 @@ def resolve_source(value: str) -> str:
             logging.error(f"could not read file {path!r}: {error}")
             sys.exit(2)
     return value
+
+
+def add_time_range_arguments(parser: ArgumentParser) -> None:
+    """Add the shared ``--since`` / ``--until`` / ``--time-field`` time-scoping options."""
+    parser.add_argument(
+        "--since",
+        metavar="WHEN",
+        help="lower time bound, inclusive: an absolute time (e.g. 2026-03-14 or "
+        "2026-03-14T00:00:00) or a relative offset. A relative offset starts with "
+        "'-', so pass it with '=': --since=-24h, --since=-7d (units s/m/h/d/w)",
+    )
+    parser.add_argument(
+        "--until",
+        metavar="WHEN",
+        help="upper time bound, exclusive: same forms as --since (e.g. --until=-1h)",
+    )
+    parser.add_argument(
+        "--time-field",
+        default=DEFAULT_TIME_FIELD,
+        metavar="FIELD",
+        help=f"timestamp field the bounds apply to (default: {DEFAULT_TIME_FIELD})",
+    )
+
+
+def resolve_time(value: str) -> str:
+    """Resolve a ``--since`` / ``--until`` value to the string a filter should use.
+
+    A relative offset ``-<N><unit>`` (unit s/m/h/d/w) is subtracted from now and
+    returned as an absolute UTC timestamp; any other value is an absolute time and
+    is returned unchanged for OpenSearch to parse.
+    """
+    match = _OFFSET.match(value)
+    if match is None:
+        return value
+    seconds = int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+    moment = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def time_range_filter(args: Namespace) -> dict[str, Any] | None:
+    """A ``range`` query DSL for ``--since`` / ``--until``, or None if neither is set.
+
+    ``--since`` is the inclusive lower bound (``gte``) and ``--until`` the
+    exclusive upper bound (``lt``), a half-open window so back-to-back ranges do
+    not double-count the boundary.
+    """
+    bounds: dict[str, str] = {}
+    if args.since is not None:
+        bounds["gte"] = resolve_time(args.since)
+    if args.until is not None:
+        bounds["lt"] = resolve_time(args.until)
+    if not bounds:
+        return None
+    return {"range": {args.time_field: bounds}}
 
 
 def _flatten(record: dict[str, Any], prefix: str = "") -> dict[str, Any]:

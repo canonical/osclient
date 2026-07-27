@@ -3,7 +3,13 @@
 
 """Unit tests for osclient.cli.query helpers."""
 
+from argparse import Namespace
+
 from osclient.cli import query
+
+
+def _args(since=None, until=None, time_field="@timestamp") -> Namespace:
+    return Namespace(since=since, until=until, time_field=time_field)
 
 
 def test_parse_dsl_returns_a_json_object() -> None:
@@ -46,3 +52,21 @@ def test_query_from_dsl_extracts_the_query_of_a_full_body() -> None:
 def test_query_from_dsl_returns_a_bare_query_object_as_is() -> None:
     bare = {"term": {"event.action": "logon"}}
     assert query._query_from_dsl(bare) == bare
+
+
+def test_with_time_filter() -> None:
+    inner = {"term": {"a": 1}}
+    time_filter = {"range": {"@timestamp": {"gte": "X"}}}
+    assert query._with_time_filter(inner, time_filter) == {
+        "bool": {"filter": [inner, time_filter]}
+    }
+    assert query._with_time_filter(inner, None) is inner
+
+
+def test_ppl_with_time() -> None:
+    args = _args(since="2026-03-14T00:00:00", until="2026-03-15T00:00:00")
+    assert query._ppl_with_time("source=logs-*", args) == (
+        "source=logs-* | where `@timestamp` >= '2026-03-14T00:00:00' "
+        "and `@timestamp` < '2026-03-15T00:00:00'"
+    )
+    assert query._ppl_with_time("source=logs-*", _args()) == "source=logs-*"

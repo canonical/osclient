@@ -8,10 +8,16 @@ import json
 import os
 import sys
 import tempfile
+from argparse import Namespace
+from datetime import datetime, timezone
 
 import yaml
 
-from osclient.cli.io import render, resolve_source
+from osclient.cli.io import render, resolve_source, resolve_time, time_range_filter
+
+
+def _args(since=None, until=None, time_field="@timestamp") -> Namespace:
+    return Namespace(since=since, until=until, time_field=time_field)
 
 
 def test_resolve_source_returns_a_literal_value_unchanged() -> None:
@@ -43,6 +49,22 @@ def test_resolve_source_exits_with_code_2_on_an_unreadable_file() -> None:
             assert False, "expected SystemExit for a missing file"
         except SystemExit as exit_error:
             assert exit_error.code == 2
+
+
+def test_resolve_time() -> None:
+    # Absolute values pass through; a relative offset is resolved against now.
+    assert resolve_time("2026-03-14T00:00:00") == "2026-03-14T00:00:00"
+    moment = datetime.strptime(resolve_time("-2h"), "%Y-%m-%dT%H:%M:%SZ")
+    delta = datetime.now(timezone.utc) - moment.replace(tzinfo=timezone.utc)
+    assert abs(delta.total_seconds() - 7200) < 5
+
+
+def test_time_range_filter() -> None:
+    assert time_range_filter(_args()) is None
+    both = time_range_filter(_args(since="2026-03-14", until="2026-03-15"))
+    assert both == {"range": {"@timestamp": {"gte": "2026-03-14", "lt": "2026-03-15"}}}
+    custom = time_range_filter(_args(since="2026-03-14", time_field="event.created"))
+    assert custom == {"range": {"event.created": {"gte": "2026-03-14"}}}
 
 
 def test_yaml_is_insertion_ordered_without_trailing_newline() -> None:

@@ -13,7 +13,12 @@ import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
-from osclient.cli.io import add_format_argument, emit
+from osclient.cli.io import (
+    add_format_argument,
+    add_time_range_arguments,
+    emit,
+    time_range_filter,
+)
 from osclient.config import client_from_env
 
 NAME = "search"
@@ -41,6 +46,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="print only the number of matching documents (via _count)",
     )
+    add_time_range_arguments(parser)
     add_format_argument(parser)
 
 
@@ -82,6 +88,10 @@ def run(args: Namespace) -> None:
         terms.append((field, [value]))
 
     body = build_term_search(terms, size=args.count)
+    time_filter = time_range_filter(args)
+    if time_filter is not None:
+        body["query"]["bool"]["filter"].append(time_filter)
+
     if args.count_only:
         emit(client.count(body["query"]), "Count", args.format)
     else:

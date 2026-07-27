@@ -41,6 +41,39 @@ record's keys, with a blank cell where a record lacks one. A list value is
 written into its cell as JSON. A result that is a single object (such as
 `cluster versions` or a triage summary) is rendered as a one-row table.
 
+## Time scoping
+
+`query sql`, `query ppl`, `query dsl`, and `search` take `--since` (inclusive
+lower bound) and `--until` (exclusive upper bound), a half-open window so
+back-to-back ranges do not double-count the boundary. `--time-field` sets the
+timestamp field the bounds apply to (defaults to `@timestamp`).
+
+A bound is either an absolute time or a relative offset:
+
+- absolute: `2026-03-14` or `2026-03-14T00:00:00`
+- relative: `-24h`, `-7d` (units `s`/`m`/`h`/`d`/`w`), resolved against the
+  current time
+
+A relative offset starts with `-`, which the argument parser would read as a
+flag, so pass it with `=`:
+
+```
+osclient query sql "SELECT ..." --since=-24h
+osclient search source.ip=10.0.0.5 --since=-7d --count 20
+osclient query sql "SELECT ..." --since 2026-03-14T00:00:00 --until 2026-03-15T00:00:00
+osclient query dsl @rule.json --since=-3d --time-field event.created
+```
+
+How the bound is applied depends on the command:
+
+- `search` and `query dsl` add a `range` filter to the query
+- `query sql` sends the range as the SQL API's `filter` field, which OpenSearch
+  ANDs with the query (the query text is left untouched)
+- `query ppl` appends a `| where` stage bounding the time field
+
+`--since` / `--until` cannot be combined with `--explain`, which shows the
+query's plan and is not affected by a separate filter.
+
 ## `osclient query`
 
 `query` runs a query in a chosen language and prints the result as YAML. Each

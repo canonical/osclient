@@ -21,7 +21,14 @@ import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
-from osclient.cli.io import add_format_argument, emit, resolve_source
+from osclient.cli.io import (
+    add_format_argument,
+    add_time_range_arguments,
+    emit,
+    resolve_source,
+    resolve_time,
+    time_range_filter,
+)
 from osclient.client import OpensearchClient
 from osclient.config import client_from_env
 
@@ -47,6 +54,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="print the execution plan (the pushed-down DSL) instead of running it",
     )
+    add_time_range_arguments(sql)
     add_format_argument(sql)
 
     ppl = languages.add_parser(
@@ -58,6 +66,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="print the execution plan (the pushed-down DSL) instead of running it",
     )
+    add_time_range_arguments(ppl)
     add_format_argument(ppl)
 
     dsl = languages.add_parser(
@@ -71,6 +80,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="route to _count and print only the number of matching documents",
     )
+    add_time_range_arguments(dsl)
     add_format_argument(dsl)
 
 
@@ -100,28 +110,62 @@ def _query_from_dsl(parsed: dict[str, Any]) -> dict[str, Any]:
     return parsed["query"] if "query" in parsed else parsed
 
 
+def _reject_time_with_explain(args: Namespace) -> None:
+    """--explain shows the query's plan, which a separate time filter cannot alter."""
+    if args.since is not None or args.until is not None:
+        logging.error("--since / --until cannot be combined with --explain")
+        sys.exit(2)
+
+
+def _with_time_filter(
+    query: dict[str, Any], time_filter: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Combine a query DSL with a time-range filter (via a bool filter), if any."""
+    if time_filter is None:
+        return query
+    return {"bool": {"filter": [query, time_filter]}}
+
+
+def _ppl_with_time(ppl: str, args: Namespace) -> str:
+    """Append a ``| where`` stage bounding the time field, if --since / --until set."""
+    conditions: list[str] = []
+    if args.since is not None:
+        conditions.append(f"`{args.time_field}` >= '{resolve_time(args.since)}'")
+    if args.until is not None:
+        conditions.append(f"`{args.time_field}` < '{resolve_time(args.until)}'")
+    if not conditions:
+        return ppl
+    return f"{ppl} | where {' and '.join(conditions)}"
+
+
 def _run_sql(client: OpensearchClient, args: Namespace) -> None:
     text = resolve_source(args.query)
     if args.explain:
+        _reject_time_with_explain(args)
         emit(client.explain(text), "Explain", args.format)
     else:
-        emit(client.sql(text), "SQL query", args.format)
+        emit(client.sql(text, time_range_filter(args)), "SQL query", args.format)
 
 
 def _run_ppl(client: OpensearchClient, args: Namespace) -> None:
     text = resolve_source(args.query)
     if args.explain:
+        _reject_time_with_explain(args)
         emit(client.explain(text, query_type="ppl"), "PPL explain", args.format)
     else:
-        emit(client.ppl(text), "PPL query", args.format)
+        emit(client.ppl(_ppl_with_time(text, args)), "PPL query", args.format)
 
 
 def _run_dsl(client: OpensearchClient, args: Namespace) -> None:
     parsed = _parse_dsl(resolve_source(args.query))
+    time_filter = time_range_filter(args)
     if args.count_only:
-        emit(client.count(_query_from_dsl(parsed)), "Count", args.format)
+        query = _with_time_filter(_query_from_dsl(parsed), time_filter)
+        emit(client.count(query), "Count", args.format)
     else:
-        emit(client.search(_search_body_from_dsl(parsed)), "DSL query", args.format)
+        body = _search_body_from_dsl(parsed)
+        body["query"] = _with_time_filter(body["query"], time_filter)
+        emit(client.search(body), "DSL query", args.format)
 
 
 def run(args: Namespace) -> None:
