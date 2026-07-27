@@ -4,9 +4,9 @@
 """``osclient query`` subcommand: read-only queries against the cluster.
 
 One mode per invocation, each printing its result as YAML:
-  --sql "<query>"           run an OpenSearch SQL query
-  --ppl "<query>"           run an OpenSearch PPL query
-  --explain "<sql>"         show an SQL query's execution plan
+  --sql                     run an OpenSearch SQL query
+  --ppl                     run an OpenSearch PPL query
+  --explain                 show an SQL query's execution plan
   --versions                show OpenSearch and installed-plugin versions
   --mapping FIELD           show the index mapping for FIELD (wildcards allowed)
   --search FIELD=VALUE ...  the newest --count docs matching all FIELD=VALUE pairs
@@ -20,7 +20,7 @@ import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
-from osclient.cli import output
+from osclient.cli.io import add_format_argument, render, resolve_source
 from osclient.client import OpensearchClient
 from osclient.config import client_from_env
 from osclient.result import OpensearchResult
@@ -31,7 +31,10 @@ NAME = "query"
 def add_subparser(subparsers: _SubParsersAction) -> None:
     """Register the ``query`` subcommand and its mutually-exclusive modes."""
     parser = subparsers.add_parser(
-        NAME, help="run a read-only query against the cluster"
+        NAME,
+        help="run a read-only query against the cluster",
+        epilog="A --sql/--ppl/--explain value may be given literally, as '-' to "
+        "read the query from stdin, or as '@PATH' to read it from a file.",
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
@@ -71,7 +74,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         default=1,
         help="number of most-recent results to return in --search mode (default: 1)",
     )
-    output.add_format_argument(parser)
+    add_format_argument(parser)
 
 
 def get_versions(client: OpensearchClient) -> dict[str, Any]:
@@ -119,7 +122,7 @@ def _emit(res: OpensearchResult[Any], label: str, fmt: str) -> None:
     if not res.ok:
         logging.error(f"{label} failed: {res.reason}")
         sys.exit(1)
-    print(output.render(res.data, fmt))
+    print(render(res.data, fmt))
 
 
 def run(args: Namespace) -> None:
@@ -129,16 +132,16 @@ def run(args: Namespace) -> None:
         sys.exit(2)
 
     if args.sql:
-        _emit(client.sql(args.sql), "SQL query", args.format)
+        _emit(client.sql(resolve_source(args.sql)), "SQL query", args.format)
         return
     if args.ppl:
-        _emit(client.ppl(args.ppl), "PPL query", args.format)
+        _emit(client.ppl(resolve_source(args.ppl)), "PPL query", args.format)
         return
     if args.explain:
-        _emit(client.explain(args.explain), "Explain", args.format)
+        _emit(client.explain(resolve_source(args.explain)), "Explain", args.format)
         return
     if args.versions:
-        print(output.render(get_versions(client), args.format))
+        print(render(get_versions(client), args.format))
         return
     if args.mapping:
         _emit(client.field_mapping(args.mapping), "Field mapping", args.format)

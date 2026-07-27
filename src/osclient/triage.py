@@ -9,7 +9,6 @@ output that ``where_to_dsl`` and its helpers parse.
 
 import json
 import logging
-import sys
 import time
 from argparse import Namespace
 from datetime import datetime, timezone
@@ -420,12 +419,11 @@ def _dispatch(args: Namespace, client: OpensearchClient) -> dict[str, Any]:
     if args.command == "status":
         return status(client, args.index)
     if args.command == "eliminate":
-        where = sys.stdin.read().strip() if args.where == "-" else args.where
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         return eliminate(
             client,
             args.index,
-            where,
+            args.where,
             args.layer,
             args.explanation,
             args.apply,

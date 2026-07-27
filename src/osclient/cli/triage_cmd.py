@@ -16,7 +16,7 @@ import sys
 from argparse import Namespace, _SubParsersAction
 
 from osclient import triage
-from osclient.cli import output
+from osclient.cli.io import add_format_argument, render, resolve_source
 from osclient.config import client_from_env
 
 NAME = "triage"
@@ -44,7 +44,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         required=True,
         help="destination triage index to create (must not already exist)",
     )
-    output.add_format_argument(init_parser)
+    add_format_argument(init_parser)
 
     status_parser = verbs.add_parser(
         "status", help="print triage progress (counts by layer), and exit"
@@ -52,7 +52,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
     status_parser.add_argument(
         "--index", required=True, help="the triage index to summarize"
     )
-    output.add_format_argument(status_parser)
+    add_format_argument(status_parser)
 
     elim = verbs.add_parser(
         "eliminate",
@@ -71,8 +71,8 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         "--where",
         required=True,
         help="SQL WHERE predicate selecting documents to eliminate, e.g. "
-        '"rule.level < 3"; pass - to read the predicate from stdin (avoids shell '
-        "quoting of backticks and quotes)",
+        '"rule.level < 3"; pass "-" to read the predicate from stdin or "@PATH" to '
+        "read it from a file",
     )
     elim.add_argument(
         "--explanation",
@@ -84,7 +84,7 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="actually write the tags; without it, only a dry-run count and sample",
     )
-    output.add_format_argument(elim)
+    add_format_argument(elim)
 
 
 def run(args: Namespace) -> None:
@@ -92,8 +92,10 @@ def run(args: Namespace) -> None:
     client = client_from_env()
     if client is None:
         sys.exit(2)
+    if getattr(args, "where", None) is not None:
+        args.where = resolve_source(args.where)
     result = triage.run(args, client)
     if not result.ok:
         print(f"error: {args.command} failed: {result.reason}", file=sys.stderr)
         sys.exit(1)
-    print(output.render(result.data, args.format))
+    print(render(result.data, args.format))

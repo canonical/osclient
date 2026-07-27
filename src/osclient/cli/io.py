@@ -1,23 +1,14 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""Render command output in a caller-chosen format.
-
-Every osclient command that prints data to the console routes it through
-:func:`render`, so the format is chosen the same way everywhere with
-:func:`add_format_argument`.
-
-The tabular formats (csv, tsv) flatten each record's nested objects into dotted
-column names (``source.ip``), taking the union of keys across all records as the
-header. A list value is written into its cell as JSON. Data that is a single
-object is rendered as a one-row table; a record that is a bare scalar goes
-under a ``value`` column.
-"""
+"""CLI IO: resolve input arguments and render output."""
 
 import csv
-import io
 import json
+import logging
+import sys
 from argparse import ArgumentParser
+from io import StringIO
 from typing import Any
 
 import yaml
@@ -34,6 +25,33 @@ def add_format_argument(parser: ArgumentParser) -> None:
         default=DEFAULT_FORMAT,
         help="output format for data printed to stdout (default: yaml)",
     )
+
+
+def resolve_source(value: str) -> str:
+    """Resolve a CLI text argument that may name where to read the text from.
+
+    One convention, shared by the query modes and triage's ``--where``:
+
+        <text>   the value is the text itself
+        -        read the text from stdin
+        @PATH    read the text from the file at PATH
+
+    Stdin and file contents are stripped of surrounding whitespace; a literal
+    value is returned unchanged. On an unreadable ``@PATH`` this logs an
+    instructive error and exits, rather than letting an OSError traceback reach
+    the user.
+    """
+    if value == "-":
+        return sys.stdin.read().strip()
+    if value.startswith("@"):
+        path = value[1:]
+        try:
+            with open(path, mode="r", encoding="utf-8") as handle:
+                return handle.read().strip()
+        except OSError as error:
+            logging.error(f"could not read file {path!r}: {error}")
+            sys.exit(2)
+    return value
 
 
 def _flatten(record: dict[str, Any], prefix: str = "") -> dict[str, Any]:
@@ -69,7 +87,7 @@ def _delimited(data: Any, delimiter: str) -> str:
         for column in flat:
             columns.setdefault(column, None)
 
-    buffer = io.StringIO()
+    buffer = StringIO()
     writer = csv.writer(buffer, delimiter=delimiter, lineterminator="\n")
     writer.writerow(list(columns))
     for flat in flat_rows:

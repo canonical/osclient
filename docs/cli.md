@@ -78,6 +78,25 @@ recent first. `--count` controls how many are returned:
 osclient query --search rule.id=5710 agent.name=web01 --count 3
 ```
 
+### Query formats
+
+`--sql`, `--ppl`, and `--explain` queries can be provided in three ways:
+
+- a literal string
+- a path to a file, expressed as `@path`
+- from `stdin`, signalled via `-`
+
+Examples:
+
+```
+osclient query --sql @failed-logins.sql
+osclient query --sql - <<'EOF'
+SELECT client_ip, COUNT(*) FROM logs-*
+WHERE `event.outcome` = 'failure'
+GROUP BY client_ip
+EOF
+```
+
 ## `osclient triage`
 
 ### What triage does
@@ -181,8 +200,8 @@ osclient triage status --index triage-hunt-001
 String literals in a predicate use single quotes and field names use backticks,
 for example `` `event.action` = 'delivery' ``. Because backticks trigger command
 substitution inside a double-quoted shell argument, either wrap the whole
-predicate in single quotes, or pass `--where -` to read the predicate from stdin
-and avoid shell quoting entirely:
+predicate in single quotes, or pass `--where -` to read the predicate from
+`stdin`, or `--where @PATH` to read it from a file:
 
 ```
 osclient triage eliminate --index triage-hunt-001 --layer 1 --explanation "received emails" --where - <<'EOF'
