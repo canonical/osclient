@@ -34,6 +34,7 @@ _TRIAGE_MAPPING = {
         "query": {"type": "keyword"},
         "explanation": {"type": "keyword"},
         "at": {"type": "date"},
+        "history": {"type": "object", "enabled": False},
     }
 }
 
@@ -46,6 +47,25 @@ _TAG_SCRIPT = (
     "ctx._source.triage.query = params.query;\n"
     "ctx._source.triage.explanation = params.explanation;\n"
     "ctx._source.triage.at = params.at;"
+)
+
+# restore records the eliminated state onto triage.history (so the undo is part of
+# the audit trail, not a silent reset) before returning the document to untriaged.
+_RESTORE_SCRIPT = (
+    "if (ctx._source.triage.history == null) {\n"
+    "  ctx._source.triage.history = new ArrayList();\n"
+    "}\n"
+    "ctx._source.triage.history.add([\n"
+    "  'layer': ctx._source.triage.layer,\n"
+    "  'query': ctx._source.triage.query,\n"
+    "  'explanation': ctx._source.triage.explanation,\n"
+    "  'at': ctx._source.triage.at,\n"
+    "  'restored_at': params.at\n"
+    "]);\n"
+    "ctx._source.triage.layer = params.untriaged;\n"
+    "ctx._source.triage.query = null;\n"
+    "ctx._source.triage.explanation = null;\n"
+    "ctx._source.triage.at = null;"
 )
 
 
@@ -176,7 +196,14 @@ def sample_untriaged(
     )
 
 
-def _tag_script(layer: int, where: str, explanation: str, at: str) -> dict[str, Any]:
+def _iso8601(at: datetime) -> str:
+    """Render a datetime as the ISO-8601 UTC string OpenSearch stores on triage.at."""
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def _tag_script(
+    layer: int, where: str, explanation: str, at: datetime
+) -> dict[str, Any]:
     """The Painless script that stamps the triage fields for this layer."""
     return {
         "lang": "painless",
@@ -185,7 +212,7 @@ def _tag_script(layer: int, where: str, explanation: str, at: str) -> dict[str, 
             "layer": layer,
             "query": where,
             "explanation": explanation,
-            "at": at,
+            "at": _iso8601(at),
         },
     }
 
@@ -196,19 +223,33 @@ def eliminate(
     where: str,
     layer: int | None,
     explanation: str,
-    apply: bool,
-    at: str,
+    apply: bool = False,
 ) -> dict[str, Any]:
-    """Tag the still-untriaged documents matching a SQL WHERE predicate with this layer.
+    """Tag the still-untriaged documents matching a SQL WHERE predicate with a layer.
 
-    layer may be None, in which case it auto-increments to one past the highest layer
-    already used on the index (1 if none have been used yet). The predicate is
-    translated to the query DSL it pushes down to (via SQL _explain) and cross-checked:
-    the DSL must match exactly as many documents as SQL COUNT(*) for the same
-    predicate, or eliminate refuses rather than risk tagging the wrong set. Without
-    apply this is a dry run (counts, the translated DSL, and a sample). With apply it
-    tags the matches with a single server-side _update_by_query, polled to completion
-    so a large elimination does not hit a request timeout.
+    The predicate is translated to the query DSL it pushes down to (via SQL
+    ``_explain``) and cross-checked: the DSL must match exactly as many documents
+    as ``SELECT COUNT(*)`` for the same predicate, or this refuses rather than risk
+    tagging the wrong set. With ``apply`` the matches are tagged by one server-side
+    ``_update_by_query``, polled to completion so a large pass does not time out.
+
+    Args:
+        client: the client used to reach the cluster.
+        index: the triage index to tag.
+        where: the SQL WHERE predicate selecting documents to eliminate.
+        layer: the elimination pass number (>= 1), or None to auto-increment to
+            one past the highest layer already used (1 on a fresh index).
+        explanation: a short, human rationale stored on each tagged document.
+        apply: if False, only dry-run counts, the translated DSL, and a sample; if
+            True, the tags are written (stamped with the current time).
+
+    Returns:
+        A summary mapping: the layer, predicate, and match counts, plus either the
+        dry-run sample or the applied-update stats.
+
+    Raises:
+        ValueError: if ``layer`` is < 1, or the predicate does not translate
+            exactly to a pushed-down filter.
     """
     if layer is None:
         layer = next_layer(client, index)
@@ -246,7 +287,7 @@ def eliminate(
         client.update_by_query(
             _combined_query(user_query),
             index=index,
-            script=_tag_script(layer, where, explanation, at),
+            script=_tag_script(layer, where, explanation, datetime.now(timezone.utc)),
             conflicts="proceed",
             wait_for_completion=False,
             refresh=True,
@@ -258,6 +299,91 @@ def eliminate(
     failures = response.get("failures", [])
     summary["applied"] = True
     summary["updated"] = response.get("updated")
+    summary["version_conflicts"] = response.get("version_conflicts")
+    summary["failures"] = len(failures)
+    if failures:
+        summary["failure_sample"] = failures[:3]
+    return summary
+
+
+def _restore_script(at: datetime) -> dict[str, Any]:
+    """The Painless script that records the eliminated state on history, then resets."""
+    return {
+        "lang": "painless",
+        "source": _RESTORE_SCRIPT,
+        "params": {"untriaged": UNTRIAGED, "at": _iso8601(at)},
+    }
+
+
+def restore(
+    client: OpensearchClient,
+    index: str,
+    layer: int | None,
+    from_layer: int | None,
+    apply: bool = False,
+) -> dict[str, Any]:
+    """Undo an elimination: reset the matching documents to untriaged.
+
+    Before returning each document to ``triage.layer = -1`` and clearing its
+    active predicate/explanation, the eliminated state is appended to
+    ``triage.history``, so the undo is part of the audit trail rather than a silent
+    reset. Mirrors :func:`eliminate` in shape.
+
+    Args:
+        client: the client used to reach the cluster.
+        index: the triage index to restore in.
+        layer: reset exactly this elimination pass (mutually exclusive with
+            ``from_layer``).
+        from_layer: reset this pass and every higher one.
+        apply: if False, only the dry-run match count, query, and a sample; if
+            True, the restore is written (each undo stamped with the current time).
+
+    Returns:
+        A summary mapping: the selector and match count, plus either the dry-run
+        sample or the applied-update stats.
+
+    Raises:
+        ValueError: if the selected layer is < 1, or neither selector is given.
+    """
+    if layer is not None:
+        if layer < 1:
+            raise ValueError(f"layer must be >= 1, got {layer}")
+        query: dict[str, Any] = {"term": {"triage.layer": layer}}
+        summary: dict[str, Any] = {"index": index, "layer": layer}
+    elif from_layer is not None:
+        if from_layer < 1:
+            raise ValueError(f"from-layer must be >= 1, got {from_layer}")
+        query = {"range": {"triage.layer": {"gte": from_layer}}}
+        summary = {"index": index, "from_layer": from_layer}
+    else:
+        raise ValueError("restore needs a layer or a from-layer")
+
+    summary["matched"] = dsl_count(client, index, query)
+
+    if not apply:
+        summary["dry_run"] = True
+        summary["query_dsl"] = query
+        summary["sample"] = _data(
+            client.search({"size": 1, "query": query}, index=index)
+        )
+        return summary
+
+    started = _data(
+        client.update_by_query(
+            query,
+            index=index,
+            script=_restore_script(datetime.now(timezone.utc)),
+            conflicts="proceed",
+            wait_for_completion=False,
+            refresh=True,
+            timeout=_TAG_TIMEOUT,
+        )
+    )
+    task = _await_task(client, started["task"])
+    response = task.get("response", {})
+    failures = response.get("failures", [])
+    summary["applied"] = True
+    summary["restored"] = response.get("updated")
     summary["version_conflicts"] = response.get("version_conflicts")
     summary["failures"] = len(failures)
     if failures:
@@ -419,14 +545,9 @@ def _dispatch(args: Namespace, client: OpensearchClient) -> dict[str, Any]:
     if args.command == "status":
         return status(client, args.index)
     if args.command == "eliminate":
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
         return eliminate(
-            client,
-            args.index,
-            args.where,
-            args.layer,
-            args.explanation,
-            args.apply,
-            now,
+            client, args.index, args.where, args.layer, args.explanation, args.apply
         )
+    if args.command == "restore":
+        return restore(client, args.index, args.layer, args.from_layer, args.apply)
     raise ValueError(f"unknown command: {args.command!r}")

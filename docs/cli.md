@@ -209,8 +209,7 @@ document, the audit trail the process promises lives in the data itself.
 
 ### How the tool performs those actions
 
-You never issue those OpenSearch calls yourself; three subcommands drive them,
-with guardrails:
+The triage process is driven by subcommands:
 
 - `init` creates the scratch index (with an explicit triage-field mapping) and
   runs the reindex, polling the async task to completion so a large copy does
@@ -218,6 +217,8 @@ with guardrails:
 - `eliminate` translates your predicate, cross-checks the translation (see
   below), and, on `--apply`, runs the tagging `_update_by_query`, again polling
   to completion.
+- `restore` undoes an elimination, returning the matching documents to untriaged
+  and recording the undo on `triage.history`.
 - `status` runs the aggregation and prints the per-layer breakdown.
 
 Before tagging anything, `eliminate` cross-checks its work: it confirms the
@@ -262,6 +263,16 @@ auto-increments to the next layer (2, 3, ...):
 
 ```
 osclient triage status --index triage-hunt-001
+```
+
+If needed, `restore` undoes an elimination: it resets the matching documents to
+untriaged and records the undo on each document's `triage.history`. `--layer`
+resets exactly one layer; `--from-layer` resets that layer _and_ every
+subsequent one . The command is a dry run unless `--apply` is given:
+
+```
+osclient triage restore --index triage-hunt-001 --layer 3               # dry run
+osclient triage restore --index triage-hunt-001 --from-layer 3 --apply
 ```
 
 ### Predicate quoting

@@ -96,7 +96,7 @@ def test_eliminate_dry_run_counts_and_cross_checks_without_writing() -> None:
         {"hits": {"hits": [{"_source": {"rule": {"level": 1}}}]}},
     ]
     client, transport = _client(responses)
-    result = triage.eliminate(client, "idx", "a = 'x'", 1, "noise", apply=False, at="T")
+    result = triage.eliminate(client, "idx", "a = 'x'", 1, "noise", apply=False)
     assert result["matched"] == 3
     assert result["untriaged_to_tag"] == 2
     assert result["already_triaged_skipped"] == 1
@@ -110,16 +110,39 @@ def test_eliminate_refuses_when_translation_is_inexact() -> None:
         [_explain('{"term": {"a": {"value": "x"}}}'), {"datarows": [[3]]}, {"count": 5}]
     )
     try:
-        triage.eliminate(client, "idx", "a = 'x'", 1, "x", apply=False, at="T")
+        triage.eliminate(client, "idx", "a = 'x'", 1, "x", apply=False)
         assert False, "expected ValueError on inexact translation"
     except ValueError as e:
         assert "translate exactly" in str(e)
 
 
+def test_restore_dry_run_selects_by_layer_or_range_without_writing() -> None:
+    sample = {"hits": {"hits": [{"_source": {"a": 1}}]}}
+    # --layer: an exact term query on that pass.
+    client, transport = _client([{"count": 3}, sample])
+    result = triage.restore(client, "idx", 2, None, apply=False)
+    assert result["matched"] == 3
+    assert result["query_dsl"] == {"term": {"triage.layer": 2}}
+    # --from-layer: a range query over that pass and above.
+    client, _ = _client([{"count": 5}, sample])
+    result = triage.restore(client, "idx", None, 2, apply=False)
+    assert result["query_dsl"] == {"range": {"triage.layer": {"gte": 2}}}
+    assert not any("_update_by_query" in path for _, path, _ in transport.calls)
+
+
+def test_restore_rejects_layer_below_one() -> None:
+    client, _ = _client([{}])
+    try:
+        triage.restore(client, "idx", 0, None, apply=False)
+        assert False, "expected ValueError for layer < 1"
+    except ValueError as e:
+        assert "layer" in str(e)
+
+
 def test_eliminate_rejects_layer_below_one() -> None:
     client, _ = _client([{}])
     try:
-        triage.eliminate(client, "idx", "x = 1", 0, "x", apply=False, at="T")
+        triage.eliminate(client, "idx", "x = 1", 0, "x", apply=False)
         assert False, "expected ValueError for layer < 1"
     except ValueError as e:
         assert "layer" in str(e)

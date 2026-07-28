@@ -118,7 +118,6 @@ def test_triage_workflow_eliminates_a_layer() -> None:
             None,
             "low severity",
             apply=True,
-            at="2026-07-20T00:00:00.000Z",
         )
         assert result["updated"] == 3
         assert result["layer"] == 1
@@ -126,6 +125,22 @@ def test_triage_workflow_eliminates_a_layer() -> None:
         after = triage.status(_client, dest)
         assert after["untriaged"] == 2
         assert after["eliminated_by_layer"] == {1: 3}
+
+        # restore undoes layer 1: the 3 docs return to untriaged, and each records
+        # the undone elimination on triage.history.
+        undo = triage.restore(_client, dest, 1, None, apply=True)
+        assert undo["restored"] == 3
+        restored = triage.status(_client, dest)
+        assert restored["untriaged"] == 5
+        assert restored["eliminated_by_layer"] == {}
+
+        rows = _client.search({"size": 10, "query": {"match_all": {}}}, index=dest)
+        assert rows
+        with_history = [doc for doc in rows.data if doc["triage"].get("history")]
+        assert len(with_history) == 3  # only the restored docs carry history
+        entry = with_history[0]["triage"]["history"][0]
+        assert entry["layer"] == 1
+        assert entry["query"] == "rule.level < 3"
 
 
 def test_bulk_indexes_documents_across_batches() -> None:

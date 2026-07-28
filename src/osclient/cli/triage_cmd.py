@@ -86,6 +86,31 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
     )
     add_format_argument(elim)
 
+    restore = verbs.add_parser(
+        "restore",
+        help="undo an elimination: reset the matching docs to untriaged, recording "
+        "the undo on triage.history (dry-run unless --apply)",
+    )
+    restore.add_argument(
+        "--index", required=True, help="the triage index to restore in"
+    )
+    which = restore.add_mutually_exclusive_group(required=True)
+    which.add_argument(
+        "--layer", type=int, help="reset exactly this elimination pass to untriaged"
+    )
+    which.add_argument(
+        "--from-layer",
+        type=int,
+        metavar="LAYER",
+        help="reset this elimination pass and every higher one to untriaged",
+    )
+    restore.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually restore; without it, only a dry-run count and sample",
+    )
+    add_format_argument(restore)
+
 
 def run(args: Namespace, client: OpensearchClient) -> None:
     """Run the chosen triage verb against the client."""
