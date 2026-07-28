@@ -2,10 +2,13 @@
 
 ## Return types
 
-Every call returns an `OpensearchResult` (`ok` / `data` / `reason`) rather than
-raising: an HTTP error, transport error, or bad response body comes back as a
-failure with a reason. `OpensearchResult` is a union of `Success` (carrying
-`data`) and `Failure` (carrying `reason`), but reads as one type.
+Every call returns an `OpensearchResult` (`ok` / `data` / `reason` / `status`)
+rather than raising. An HTTP error, transport error, or bad response body comes
+back as a failure with a reason. `OpensearchResult` is a union of `Success`
+(carrying `data`) and `Failure` (carrying `reason`), but reads as one type.
+`status` is the HTTP status code when one is known (set on an HTTP-error
+failure, e.g. `413`), else `None`. A failure's `data` is normally `None`, but a
+call that produced a partial result may include metadata here.
 
 A result is truthy when it succeeded, so `if res:` (or `if not res:`,
 `assert res`) both branches and narrows `data` to be present:
@@ -46,8 +49,20 @@ method returns an `OpensearchResult`.
   aggregations), `count(query)`, `sql(q)`, `sql_raw(q)` (raw jdbc), `ppl(q)`,
   `explain(q)`, `get_mapping()`, `field_mapping(field)`, `opensearch_version()`,
   `plugin_versions()`.
-- Writes / admin: `index_document(document)`, `create_index(body)`,
-  `reindex(source, dest)`, `update_by_query(query)`, `get_task(task_id)`.
+- Writes / admin: `index_document(document)`, `bulk(documents)`,
+  `create_index(body)`, `reindex(source, dest)`, `update_by_query(query)`,
+  `get_task(task_id)`.
+
+`bulk(documents, index=None, *, action="index", max_bytes=..., max_retries=3)`
+writes many documents through the `_bulk` API. It serializes them to
+newline-delimited JSON, sends them in batches bounded by `max_bytes`, halves a
+batch that comes back `413`, and inspects each item's own result rather than
+trusting the bulk request's `200`. Any failed document, whether from a failed
+batch or a per-item error, is retried up to `max_retries` times (`0` disables
+retries). The run is summarized as `indexed` / `failed` document counts, the
+number of `batches` sent, and a `failures` list (each with the offending
+`document` and its error). The result is a `Success` only if every document was
+indexed; if any failed, it is a `Failure`. (`data` still contains the summary.)
 
 Index-scoped helpers (`search`, `count`, `create_index`, `update_by_query`,
 `get_mapping`, `field_mapping`, ...) target `default_index` unless you pass an
@@ -86,7 +101,7 @@ Two transports compose the two when the endpoint type is uncertain:
 from osclient import OpensearchClient, DirectTransport
 
 transport = DirectTransport("https://host:9200", ("user", "pass"), verify="/etc/ssl/ca.pem")
-client = OpensearchClient(transport, index="logs-*")
+client = OpensearchClient(transport, default_index="logs-*")
 ```
 
 ## Building from the environment

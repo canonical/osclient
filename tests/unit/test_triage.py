@@ -24,10 +24,17 @@ class FakeTransport:
         self.calls: list[tuple[str, str, Any]] = []
 
     def request(
-        self, method: str, path: str, body: Any = None, timeout: int = 30
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        content_type: str = "application/json",
+        timeout: int = 30,
     ) -> OpensearchResult[Any]:
         self.calls.append((method, path, body))
-        data = self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        data = (
+            self._responses.pop(0) if len(self._responses) > 1 else self._responses[0]
+        )
         return Success(data)
 
 
@@ -38,21 +45,31 @@ def _client(responses: list[dict[str, Any]]) -> tuple[OpensearchClient, FakeTran
 
 def _explain(query_json: str) -> dict[str, Any]:
     # The pushed-down DSL lives as JSON inside a stringified OpenSearchQueryRequest.
-    return {"root": {"description": {"request": 'sourceBuilder={"query": ' + query_json + "}"}}}
+    return {
+        "root": {
+            "description": {"request": 'sourceBuilder={"query": ' + query_json + "}"}
+        }
+    }
 
 
 def _status(counts: dict[int, int]) -> dict[str, Any]:
     buckets = [{"key": k, "doc_count": c} for k, c in counts.items()]
     return {
         "hits": {"total": {"value": sum(counts.values())}},
-        "aggregations": {"untagged": {"doc_count": 0}, "by_layer": {"buckets": buckets}},
+        "aggregations": {
+            "untagged": {"doc_count": 0},
+            "by_layer": {"buckets": buckets},
+        },
     }
 
 
 def test_extract_json_object_respects_string_literals() -> None:
     # Braces inside a string value must not end the object early.
     text = 'x {"a": "has } brace", "b": {"c": 1}} y'
-    assert triage._extract_json_object(text, text.index("{")) == '{"a": "has } brace", "b": {"c": 1}}'
+    assert (
+        triage._extract_json_object(text, text.index("{"))
+        == '{"a": "has } brace", "b": {"c": 1}}'
+    )
 
 
 def test_where_to_dsl_parses_pushdown_and_errors_without_it() -> None:
@@ -120,18 +137,28 @@ def test_status_summarizes_layers_and_missing_field() -> None:
     result = triage.status(client, "hunt")
     assert result["untriaged"] == 4
     assert result["eliminated_by_layer"] == {1: 3, 2: 2}
-    assert transport.calls[0][:2] == ("POST", "hunt/_search")  # the named index, not a default
+    assert transport.calls[0][:2] == (
+        "POST",
+        "hunt/_search",
+    )  # the named index, not a default
 
     # An index never through init has no triage.layer anywhere.
-    missing = {"hits": {"total": {"value": 5}}, "aggregations": {"untagged": {"doc_count": 5}, "by_layer": {"buckets": []}}}
+    missing = {
+        "hits": {"total": {"value": 5}},
+        "aggregations": {"untagged": {"doc_count": 5}, "by_layer": {"buckets": []}},
+    }
     assert triage.status(_client([missing])[0], "hunt")["untagged_missing_field"] == 5
 
 
 def test_run_wraps_a_failed_call_as_a_result() -> None:
     class Failing:
-        def request(self, method, path, body=None, timeout=30):
+        def request(
+            self, method, path, body=None, content_type="application/json", timeout=30
+        ):
             return Failure("503 unavailable")
 
-    result = triage.run(Namespace(command="status", index="x"), OpensearchClient(Failing()))
+    result = triage.run(
+        Namespace(command="status", index="x"), OpensearchClient(Failing())
+    )
     assert not result.ok
     assert "503 unavailable" in result.reason

@@ -37,21 +37,10 @@ Runtime dependencies: `requests`, `PyYAML`.
 
 ## Roadmap
 
-The client currently covers single-document indexing, search, SQL and PPL,
-counts, mappings, versions, index creation, reindex, update-by-query, and task
-polling, over a direct or dashboard-proxy transport with server-certificate
+The client currently covers single-document and bulk indexing, search, SQL and
+PPL, counts, mappings, versions, index creation, reindex, update-by-query, and
+task polling, over a direct or dashboard-proxy transport with server-certificate
 verification. The following capabilities are planned but not yet implemented:
-
-### Bulk indexing
-
-A method for writing many documents in one round trip via the `_bulk` API:
-
-- serialize documents to newline-delimited JSON and split them into batches
-  bounded by a configurable byte limit;
-- retry transient transport errors and 5xx responses, and halve the batch size
-  on a `413` (request entity too large) before retrying;
-- inspect the per-item results and report which documents failed and why, rather
-  than treating a `200` on the bulk request as success.
 
 ### Mutual TLS
 

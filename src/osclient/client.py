@@ -3,13 +3,88 @@
 
 """The high-level OpenSearch client (transport-agnostic)."""
 
-from typing import Any
+import json
+from collections.abc import Iterable
+from typing import Any, NamedTuple
 
 from osclient.jdbc import rows_from_sql_response
-from osclient.result import OpensearchResult, Success
+from osclient.result import Failure, OpensearchResult, Success
 from osclient.transport import REQUEST_TIMEOUT, Transport
 
 DEFAULT_INDEX = "*"
+
+# Default byte ceiling for one _bulk request body; batches are packed under it.
+BULK_MAX_BYTES = 10_000_000
+
+
+class BulkItem(NamedTuple):
+    """A document's encoded NDJSON lines, plus the source kept for failure reports.
+
+    ``payload`` is stored (not recomputed) so each document is serialized exactly
+    once; ``document`` is kept because a failure reports the original source, which
+    cannot be recovered from the encoded bytes.
+    """
+
+    payload: bytes
+    document: dict[str, Any]
+
+    @classmethod
+    def build(cls, action: str, index: str, document: dict[str, Any]) -> "BulkItem":
+        """Encode one document's action + source NDJSON lines, once."""
+        meta = json.dumps({action: {"_index": index}})
+        return cls(f"{meta}\n{json.dumps(document)}\n".encode(), document)
+
+
+BulkBatch = list[BulkItem]
+
+
+def _pack_batches(items: list[BulkItem], max_bytes: int) -> list[BulkBatch]:
+    """Group items into batches whose combined payloads fit max_bytes.
+
+    Each item's ``payload`` is already-encoded bytes, so its length is its wire
+    size and no re-serialization is needed to measure it. A single item larger
+    than max_bytes still goes in a batch of its own: it cannot be split further,
+    and will be reported as a failure if rejected.
+    """
+    batches: list[BulkBatch] = []
+    current: list[BulkItem] = []
+    size = 0
+    for item in items:
+        if current and size + len(item.payload) > max_bytes:
+            batches.append(current)
+            current, size = [], 0
+        current.append(item)
+        size += len(item.payload)
+    if current:
+        batches.append(current)
+    return batches
+
+
+BulkFailure = tuple[BulkItem, dict[str, Any]]
+
+
+def _tally_bulk_items(
+    response: dict[str, Any],
+    batch: BulkBatch,
+    action: str,
+    summary: dict[str, Any],
+    failures: list[BulkFailure],
+) -> None:
+    """Fold one 200 bulk response's per-item results into the run.
+
+    The bulk API returns 200 even when individual items fail, so each item's own
+    status/error is what decides success, not the request status. A success counts
+    into ``summary['indexed']``; a failed item is appended to ``failures`` (with
+    its error) so the caller can retry it before recording it as failed.
+    """
+    results = response.get("items", [])
+    for item, result in zip(batch, results, strict=False):
+        outcome = result.get(action, {}) if isinstance(result, dict) else {}
+        error = outcome.get("error")
+        if error is None and outcome.get("status", 0) < 300:
+            summary["indexed"] += 1
+        else:
+            failures.append((item, {"status": outcome.get("status"), "error": error}))
 
 
 def _query_string(params: dict[str, Any]) -> str:
@@ -25,8 +100,9 @@ def _query_string(params: dict[str, Any]) -> str:
 class OpensearchClient:
     """Query and administer an OpenSearch cluster over a transport.
 
-    Every operation funnels through the one :meth:`request` primitive (delegated
-    to the transport). The named helpers build on it, and each returns an
+    Most operations funnel through :meth:`request`, which JSON-encodes the body
+    and hands the bytes to the transport; :meth:`bulk` encodes newline-delimited
+    JSON and sends it the same way. Each helper returns an
     :class:`~osclient.result.OpensearchResult`.
 
     Index-scoped helpers (``search``, ``count``, ``create_index``, ...) target
@@ -56,17 +132,18 @@ class OpensearchClient:
         body: dict[str, Any] | None = None,
         timeout: int = REQUEST_TIMEOUT,
     ) -> OpensearchResult[Any]:
-        """Send an arbitrary request to the cluster.
+        """Send a JSON request to the cluster (the primitive most helpers build on).
 
         Args:
             method (str): the HTTP method, e.g. ``GET``, ``POST`` or ``PUT``.
             path (str): the OpenSearch path (no leading slash), query string
                 allowed, e.g. ``my-index/_search``.
-            body (dict[str, Any] | None): optional JSON request body.
+            body (dict[str, Any] | None): optional request body, encoded as JSON.
             timeout (int): request timeout in seconds; override for operations that
                 can run longer than a search.
         """
-        return self._transport.request(method, path, body, timeout)
+        encoded = None if body is None else json.dumps(body).encode()
+        return self._transport.request(method, path, encoded, timeout=timeout)
 
     def get(self, path: str) -> OpensearchResult[Any]:
         """GET an arbitrary OpenSearch path, e.g. ``_cat/plugins?format=json``."""
@@ -172,6 +249,92 @@ class OpensearchClient:
         return Success({p.get("component"): p.get("version") for p in res.data})
 
     # -- writes / admin ---------------------------------------------------
+
+    def _send_bulk(
+        self,
+        items: list[BulkItem],
+        max_bytes: int,
+        action: str,
+        summary: dict[str, Any],
+    ) -> list[BulkFailure]:
+        """POST one batch of NDJSON to ``_bulk``.
+
+        Successes count into ``summary`` as they land; the items that failed this
+        pass (a whole-batch failure, or a per-item error in a 200) are returned so
+        the caller can retry them. A 413 is not a failure: the batch is halved and
+        the halves are sent in this same pass.
+        """
+        failures: list[BulkFailure] = []
+        queue = _pack_batches(items, max_bytes)
+        while queue:
+            batch = queue.pop(0)
+            payload = b"".join(item.payload for item in batch)
+            result = self._transport.request(
+                "POST", "_bulk", payload, content_type="application/x-ndjson"
+            )
+            if result:
+                summary["batches"] += 1
+                _tally_bulk_items(result.data, batch, action, summary, failures)
+            elif result.status == 413 and len(batch) > 1:
+                middle = len(batch) // 2
+                queue.insert(0, batch[middle:])
+                queue.insert(0, batch[:middle])
+            else:
+                summary["batches"] += 1
+                info = {"status": result.status, "reason": result.reason}
+                failures.extend((item, info) for item in batch)
+        return failures
+
+    def bulk(
+        self,
+        documents: Iterable[dict[str, Any]],
+        index: str | None = None,
+        *,
+        action: str = "index",
+        max_bytes: int = BULK_MAX_BYTES,
+        max_retries: int = 3,
+    ) -> OpensearchResult[dict[str, Any]]:
+        """Index many documents via the ``_bulk`` API, in byte-bounded batches.
+
+        Documents are serialized to newline-delimited JSON and sent in batches no
+        larger than ``max_bytes``. A batch rejected with 413 (too large) is halved.
+        Every 200's per-item results are inspected, so a document that failed
+        inside an otherwise-2xx bulk response is not trusted as written. Any failed
+        document, whether from a failed batch or a per-item error, is retried up to
+        ``max_retries`` times (``max_retries=0`` disables retries).
+
+        Returns a summary: ``indexed`` and ``failed`` document counts, the number
+        of ``batches`` sent, and a ``failures`` list (each with the offending
+        ``document`` and its error). The result is a ``Success`` only if every
+        document was indexed; if any failed, it is a ``Failure`` whose ``data``
+        still carries the same summary for inspection.
+        """
+        idx = index or self.default_index
+        pending = [BulkItem.build(action, idx, doc) for doc in documents]
+        total = len(pending)
+        summary: dict[str, Any] = {
+            "indexed": 0,
+            "failed": 0,
+            "batches": 0,
+            "failures": [],
+        }
+
+        failures = self._send_bulk(pending, max_bytes, action, summary)
+        for _ in range(max_retries):
+            if not failures:
+                break
+            failures = self._send_bulk(
+                [item for item, _ in failures], max_bytes, action, summary
+            )
+
+        for item, info in failures:
+            summary["failed"] += 1
+            summary["failures"].append({**info, "document": item.document})
+
+        if summary["failed"]:
+            reason = f"{summary['failed']} of {total} documents failed to index"
+            return Failure(reason, data=summary)
+        return Success(summary)
 
     def index_document(
         self,

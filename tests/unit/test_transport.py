@@ -67,11 +67,13 @@ def _stub(transport: Any, response: Any) -> FakeSession:
 def test_direct_transport_builds_the_rest_request() -> None:
     transport = DirectTransport("https://host:9200/", ("u", "p"), True)
     session = _stub(transport, FakeResponse(200, {"ok": 1}))
-    assert transport.request("GET", "logs-*/_search", {"q": 1}, timeout=10).data == {"ok": 1}
+    got = transport.request("GET", "logs-*/_search", b'{"q": 1}', timeout=10)
+    assert got.data == {"ok": 1}
     assert session.calls[0] == {
         "method": "GET",
         "url": "https://host:9200/logs-*/_search",
-        "json": {"q": 1},
+        "data": b'{"q": 1}',
+        "headers": {"Content-Type": "application/json"},
         "verify": True,
         "timeout": 10,
     }
@@ -81,11 +83,12 @@ def test_proxy_transport_tunnels_and_sets_xsrf() -> None:
     transport = ProxyTransport("https://dash/", ("u", "p"), True)
     assert transport.session.headers["osd-xsrf"] == "true"  # set at construction
     session = _stub(transport, FakeResponse(200, {"ok": 1}))
-    transport.request("PUT", "my-index", {"m": {}})
+    transport.request("PUT", "my-index", b'{"m": {}}')
     call = session.calls[0]
     assert call["url"] == "https://dash/api/console/proxy"
     assert call["params"] == {"path": "my-index", "method": "PUT"}
-    assert call["json"] == {"m": {}}
+    assert call["data"] == b'{"m": {}}'
+    assert call["headers"] == {"Content-Type": "application/json"}
 
 
 def test_request_turns_failures_into_reasons() -> None:
@@ -103,6 +106,33 @@ def test_request_turns_failures_into_reasons() -> None:
         assert all(f in res.reason for f in fragments)
 
 
+def test_transport_sends_the_body_with_its_content_type() -> None:
+    transport = DirectTransport("https://h:9200", ("u", "p"), True)
+    session = _stub(transport, FakeResponse(200, {"ok": 1}))
+    transport.request(
+        "POST", "_bulk", b"line1\nline2\n", content_type="application/x-ndjson"
+    )
+    assert session.calls[0]["data"] == b"line1\nline2\n"
+    assert session.calls[0]["headers"] == {"Content-Type": "application/x-ndjson"}
+
+
+def test_a_bodyless_request_sends_no_content_type() -> None:
+    transport = DirectTransport("https://h:9200", ("u", "p"), True)
+    session = _stub(transport, FakeResponse(200, {}))
+    transport.request("GET", "logs-*/_search")
+    assert session.calls[0]["data"] is None
+    assert session.calls[0]["headers"] == {}
+
+
+def test_http_error_failure_carries_the_status_code() -> None:
+    transport = DirectTransport("https://h:9200", ("u", "p"), True)
+    _stub(transport, FakeResponse(413, None, text="too large"))
+    assert transport.request("POST", "_bulk", b"x").status == 413
+    # A transport error is not an HTTP status.
+    _stub(transport, requests.ConnectionError("down"))
+    assert transport.request("GET", "x").status is None
+
+
 def _failover(primary: Any, fallback: Any) -> tuple:
     p = DirectTransport("https://direct:9200", ("u", "p"), True)
     f = ProxyTransport("https://dash", ("u", "p"), True)
@@ -112,7 +142,9 @@ def _failover(primary: Any, fallback: Any) -> tuple:
 
 def test_failover_retries_only_on_a_transport_error() -> None:
     # Unreachable primary -> fall back to the proxy.
-    ft, fs = _failover(requests.ConnectionError("down"), FakeResponse(200, {"via": "proxy"}))
+    ft, fs = _failover(
+        requests.ConnectionError("down"), FakeResponse(200, {"via": "proxy"})
+    )
     assert ft.request("GET", "x").data == {"via": "proxy"}
     assert fs.calls
     # An HTTP error is a real answer -> returned as-is, proxy untouched.
@@ -133,15 +165,25 @@ def _probe(direct: Any, proxy: Any) -> tuple:
 
 def test_probe_caches_the_answering_transport() -> None:
     # Direct answers -> used for both requests, proxy never tried.
-    pt, ds, ps = _probe(FakeResponse(200, {"via": "direct"}), FakeResponse(200, {"via": "proxy"}))
-    assert pt.request("GET", "x").data == pt.request("GET", "x").data == {"via": "direct"}
+    pt, ds, ps = _probe(
+        FakeResponse(200, {"via": "direct"}), FakeResponse(200, {"via": "proxy"})
+    )
+    assert (
+        pt.request("GET", "x").data == pt.request("GET", "x").data == {"via": "direct"}
+    )
     assert len(ds.calls) == 2 and ps.calls == []
     # Direct fails (dashboard 404) -> proxy used and cached (direct tried once).
-    pt, ds, ps = _probe(FakeResponse(404, None, text="no"), FakeResponse(200, {"via": "proxy"}))
-    assert pt.request("GET", "x").data == pt.request("GET", "x").data == {"via": "proxy"}
+    pt, ds, ps = _probe(
+        FakeResponse(404, None, text="no"), FakeResponse(200, {"via": "proxy"})
+    )
+    assert (
+        pt.request("GET", "x").data == pt.request("GET", "x").data == {"via": "proxy"}
+    )
     assert len(ds.calls) == 1 and len(ps.calls) == 2
     # Both fail -> nothing cached, so a second request probes again.
-    pt, ds, ps = _probe(FakeResponse(500, None, text="d"), FakeResponse(502, None, text="p"))
+    pt, ds, ps = _probe(
+        FakeResponse(500, None, text="d"), FakeResponse(502, None, text="p")
+    )
     res = pt.request("GET", "x")
     assert not res and "d" in res.reason and "p" in res.reason
     pt.request("GET", "x")

@@ -39,14 +39,25 @@ env_list = ["lint", "type", "unit"]
 
 [tool.tox.env.lint]
 description = "Run lint checks"
+allowlist_externals = ["bash"]
+skip_install = true
+recreate = true
+deps = ["ruff==0.15.20"]
+commands = [
+    ["bash", "tests/lint/ascii-check.sh"],
+    ["ruff", "check", "{tox_root}/src", "{tox_root}/tests"],
+    ["ruff", "format", "--check", "{tox_root}/src", "{tox_root}/tests"],
+]
+
+[tool.tox.env.fmt]
+description = "Run ruff's auto-formatter"
 allowlist_externals = ["sh"]
 skip_install = true
 recreate = true
 deps = ["ruff==0.15.20"]
 commands = [
-    ["sh", "tests/lint/ascii-check.sh"],
-    ["ruff", "check", "{tox_root}/src", "{tox_root}/tests"],
-    ["ruff", "format", "--check", "{tox_root}/src", "{tox_root}/tests"],
+    ["ruff", "check", "--fix", "{tox_root}/src", "{tox_root}/tests"],
+    ["ruff", "format", "{tox_root}/src", "{tox_root}/tests"],
 ]
 
 [tool.tox.env.type]

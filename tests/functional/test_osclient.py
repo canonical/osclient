@@ -126,3 +126,46 @@ def test_triage_workflow_eliminates_a_layer() -> None:
         after = triage.status(_client, dest)
         assert after["untriaged"] == 2
         assert after["eliminated_by_layer"] == {1: 3}
+
+
+def test_bulk_indexes_documents_across_batches() -> None:
+    index = _unique("osclient-func-bulk")
+    with _temporary_indices(index):
+        docs = [{"name": f"host-{i}", "n": i} for i in range(50)]
+        # A small byte cap forces the 50 documents across several batches.
+        result = _client.bulk(docs, index=index, max_bytes=300)
+        assert result, result.reason
+        assert result.data["indexed"] == 50
+        assert result.data["failed"] == 0
+        assert result.data["batches"] > 1
+
+        assert _client.request("POST", f"{index}/_refresh").ok
+        count = _client.count({"match_all": {}}, index=index)
+        assert count
+        assert count.data == 50
+        rows = _client.sql(f"SELECT name FROM {index} WHERE n = 7")
+        assert rows
+        assert [row["name"] for row in rows.data] == ["host-7"]
+
+
+def test_bulk_reports_a_rejected_document() -> None:
+    index = _unique("osclient-func-bulk-reject")
+    with _temporary_indices(index):
+        assert _client.create_index(
+            {"mappings": {"properties": {"n": {"type": "integer"}}}}, index=index
+        ).ok
+        # The middle document's value cannot coerce to the integer mapping, so the
+        # cluster rejects that one item while indexing the others: a per-item error
+        # inside an otherwise-200 bulk response.
+        result = _client.bulk(
+            [{"n": 1}, {"n": "not-an-int"}, {"n": 3}], index=index, max_retries=0
+        )
+        assert not result
+        assert "1 of 3" in result.reason
+        assert result.data["indexed"] == 2
+        assert result.data["failed"] == 1
+        failures = result.data["failures"]
+        assert len(failures) == 1
+        assert failures[0]["document"] == {"n": "not-an-int"}
+        assert failures[0]["status"] >= 400
+        assert failures[0]["error"] is not None

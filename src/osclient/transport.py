@@ -32,13 +32,20 @@ REQUEST_TIMEOUT = 30
 
 
 class Transport(Protocol):
-    """Something that can carry a request to a cluster and return a result."""
+    """Carry an already-encoded request body to a cluster and return a result.
+
+    The body is bytes (or None); ``content_type`` is the header to send with it.
+    A transport does no serialization: the caller (the client) encodes JSON or
+    NDJSON and names the content type. A transport's job is purely to reach the
+    cluster (topology, auth, TLS, failover) and normalize the outcome.
+    """
 
     def request(
         self,
         method: str,
         path: str,
-        body: dict[str, Any] | None = ...,
+        body: bytes | None = ...,
+        content_type: str = ...,
         timeout: int = ...,
     ) -> OpensearchResult[Any]: ...
 
@@ -48,11 +55,19 @@ def _result_from_response(
 ) -> OpensearchResult[Any]:
     """Turn a received HTTP response into a result (non-ok status is a value)."""
     if not response.ok:
-        return Failure(f"{response.status_code} from {method} {path}: {response.text}")
+        return Failure(
+            f"{response.status_code} from {method} {path}: {response.text}",
+            status=response.status_code,
+        )
     try:
         return Success(response.json())
     except ValueError as e:
         return Failure(f"invalid JSON in response: {e}")
+
+
+def _headers(body: bytes | None, content_type: str) -> dict[str, str]:
+    """The Content-Type header for a request, only when it carries a body."""
+    return {"Content-Type": content_type} if body is not None else {}
 
 
 class _HttpTransport:
@@ -71,10 +86,14 @@ class _HttpTransport:
         self.verify = verify
         self.session = requests.Session()
         self.session.auth = auth
-        self.session.headers.update({"Content-Type": "application/json"})
 
     def send(
-        self, method: str, path: str, body: dict[str, Any] | None, timeout: int
+        self,
+        method: str,
+        path: str,
+        body: bytes | None,
+        content_type: str,
+        timeout: int,
     ) -> requests.Response:
         raise NotImplementedError
 
@@ -82,11 +101,12 @@ class _HttpTransport:
         self,
         method: str,
         path: str,
-        body: dict[str, Any] | None = None,
+        body: bytes | None = None,
+        content_type: str = "application/json",
         timeout: int = REQUEST_TIMEOUT,
     ) -> OpensearchResult[Any]:
         try:
-            response = self.send(method, path, body, timeout)
+            response = self.send(method, path, body, content_type, timeout)
         except requests.RequestException as e:
             return Failure(str(e))
         return _result_from_response(response, method, path)
@@ -96,12 +116,18 @@ class DirectTransport(_HttpTransport):
     """Talk to the OpenSearch REST API directly at ``base_url`` (e.g. port 9200)."""
 
     def send(
-        self, method: str, path: str, body: dict[str, Any] | None, timeout: int
+        self,
+        method: str,
+        path: str,
+        body: bytes | None,
+        content_type: str,
+        timeout: int,
     ) -> requests.Response:
         return self.session.request(
             method,
             f"{self.base_url}/{path}",
-            json=body,
+            data=body,
+            headers=_headers(body, content_type),
             verify=self.verify,
             timeout=timeout,
         )
@@ -121,12 +147,18 @@ class ProxyTransport(_HttpTransport):
         self.session.headers.update({"osd-xsrf": "true"})
 
     def send(
-        self, method: str, path: str, body: dict[str, Any] | None, timeout: int
+        self,
+        method: str,
+        path: str,
+        body: bytes | None,
+        content_type: str,
+        timeout: int,
     ) -> requests.Response:
         return self.session.post(
             f"{self.base_url}{PROXY_PATH}",
             params={"path": path, "method": method},
-            json=body,
+            data=body,
+            headers=_headers(body, content_type),
             verify=self.verify,
             timeout=timeout,
         )
@@ -150,18 +182,19 @@ class FailoverTransport:
         self,
         method: str,
         path: str,
-        body: dict[str, Any] | None = None,
+        body: bytes | None = None,
+        content_type: str = "application/json",
         timeout: int = REQUEST_TIMEOUT,
     ) -> OpensearchResult[Any]:
         try:
-            response = self.primary.send(method, path, body, timeout)
+            response = self.primary.send(method, path, body, content_type, timeout)
         except requests.RequestException as primary_error:
             logging.warning(
                 "primary transport failed (%s); falling back to the proxy",
                 primary_error,
             )
             try:
-                response = self.fallback.send(method, path, body, timeout)
+                response = self.fallback.send(method, path, body, content_type, timeout)
             except requests.RequestException as fallback_error:
                 return Failure(
                     f"primary transport failed ({primary_error}); "
@@ -194,13 +227,14 @@ class ProbeTransport:
         self,
         method: str,
         path: str,
-        body: dict[str, Any] | None = None,
+        body: bytes | None = None,
+        content_type: str = "application/json",
         timeout: int = REQUEST_TIMEOUT,
     ) -> OpensearchResult[Any]:
         if self._chosen is not None:
-            return self._chosen.request(method, path, body, timeout)
+            return self._chosen.request(method, path, body, content_type, timeout)
 
-        direct_result = self.direct.request(method, path, body, timeout)
+        direct_result = self.direct.request(method, path, body, content_type, timeout)
         if direct_result.ok:
             self._chosen = self.direct
             return direct_result
@@ -209,7 +243,7 @@ class ProbeTransport:
             "direct connection did not answer (%s); trying the dashboard proxy",
             direct_result.reason,
         )
-        proxy_result = self.proxy.request(method, path, body, timeout)
+        proxy_result = self.proxy.request(method, path, body, content_type, timeout)
         if proxy_result.ok:
             self._chosen = self.proxy
             return proxy_result
