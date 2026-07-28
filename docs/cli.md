@@ -136,6 +136,19 @@ osclient index mapping "data.event.*"
 osclient index mapping source.ip --index logs-2026.07.14
 ```
 
+`bulk` writes many documents into `--index` in one pass. `SOURCE` is the
+documents, given as `@PATH` (a file), `-` (stdin), or literally, and
+`--input-format` says how to read it: `json` (an array of objects), `jsonl` (one
+object per line), or `yaml` (a sequence of mappings). It prints the run summary
+(`indexed` / `failed` counts and a `failures` list) and exits non-zero if any
+document failed:
+
+```
+osclient index bulk @events.jsonl --index hunt-001 --input-format jsonl
+osclient index bulk @events.yaml  --index hunt-001 --input-format yaml
+osclient index bulk - --index hunt-001 --input-format json < events.json
+```
+
 ## `osclient cluster`
 
 `cluster` groups cluster-level inspection. `versions` reports the OpenSearch and
