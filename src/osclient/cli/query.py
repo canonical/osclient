@@ -30,7 +30,6 @@ from osclient.cli.io import (
     time_range_filter,
 )
 from osclient.client import OpensearchClient
-from osclient.config import client_from_env
 
 NAME = "query"
 
@@ -168,11 +167,8 @@ def _run_dsl(client: OpensearchClient, args: Namespace) -> None:
         emit(client.search(body), "DSL query", args.format)
 
 
-def run(args: Namespace) -> None:
-    """Build the client from the environment and run the chosen language verb."""
-    client = client_from_env()
-    if client is None:
-        sys.exit(2)
+def run(args: Namespace, client: OpensearchClient) -> None:
+    """Run the chosen language verb against the client."""
     if args.language == "sql":
         _run_sql(client, args)
     elif args.language == "ppl":

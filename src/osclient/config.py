@@ -81,8 +81,12 @@ def _index() -> str:
     return DEFAULT_INDEX
 
 
-def client_from_env() -> OpensearchClient | None:
+def client_from_env(insecure: bool = False) -> OpensearchClient | None:
     """Build a client from the ``OPENSEARCH_*`` environment variables.
+
+    Args:
+        insecure (bool): if True, skip TLS certificate verification, the same as
+            setting ``OPENSEARCH_INSECURE``; either turning it on is enough.
 
     Returns:
         OpensearchClient | None: the configured client, or None (after printing an
@@ -98,7 +102,7 @@ def client_from_env() -> OpensearchClient | None:
         return None
     auth = (user, password)
 
-    if _env_flag("OPENSEARCH_INSECURE"):
+    if insecure or _env_flag("OPENSEARCH_INSECURE"):
         urllib3.disable_warnings()
         verify: bool | str = False
     else:

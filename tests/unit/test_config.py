@@ -96,6 +96,12 @@ def test_verify_reflects_insecure_and_ca_cert() -> None:
     )._transport
     assert isinstance(ca, ProxyTransport)
     assert ca.verify == "/ca.pem"
+    # The insecure=True argument (the CLI --insecure flag) forces it off too.
+    with env(**_CREDS, OPENSEARCH_DASHBOARD_URL="https://d"):
+        by_arg = client_from_env(insecure=True)
+    assert by_arg is not None
+    assert isinstance(by_arg._transport, ProxyTransport)
+    assert by_arg._transport.verify is False
 
 
 def test_returns_none_without_credentials_or_endpoint() -> None:

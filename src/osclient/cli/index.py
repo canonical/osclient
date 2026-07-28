@@ -12,7 +12,7 @@ from typing import Any
 import yaml
 
 from osclient.cli.io import add_format_argument, emit, render, resolve_source
-from osclient.config import client_from_env
+from osclient.client import OpensearchClient
 
 NAME = "index"
 
@@ -91,11 +91,8 @@ def _load_documents(text: str, input_format: str) -> list[dict[str, Any]]:
     return documents
 
 
-def run(args: Namespace) -> None:
-    """Build the client from the environment and run the chosen operation."""
-    client = client_from_env()
-    if client is None:
-        sys.exit(2)
+def run(args: Namespace, client: OpensearchClient) -> None:
+    """Run the chosen operation against the client."""
     if args.operation == "mapping":
         emit(
             client.field_mapping(args.field, index=args.index),

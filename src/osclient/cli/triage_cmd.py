@@ -17,7 +17,7 @@ from argparse import Namespace, _SubParsersAction
 
 from osclient import triage
 from osclient.cli.io import add_format_argument, render, resolve_source
-from osclient.config import client_from_env
+from osclient.client import OpensearchClient
 
 NAME = "triage"
 
@@ -87,11 +87,8 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
     add_format_argument(elim)
 
 
-def run(args: Namespace) -> None:
-    """Build the client from the environment and run the chosen triage verb."""
-    client = client_from_env()
-    if client is None:
-        sys.exit(2)
+def run(args: Namespace, client: OpensearchClient) -> None:
+    """Run the chosen triage verb against the client."""
     if getattr(args, "where", None) is not None:
         args.where = resolve_source(args.where)
     result = triage.run(args, client)

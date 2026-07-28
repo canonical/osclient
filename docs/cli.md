@@ -24,6 +24,14 @@ stderr with a non-zero exit status.
 The connection is resolved from the `OPENSEARCH_*` environment variables (see
 [Library](library.md)), so no credentials ever appear on the command line.
 
+The global `--insecure` flag skips TLS certificate verification. It is the
+command-line equivalent of `OPENSEARCH_INSECURE=1` and goes before the
+subcommand:
+
+```
+osclient --insecure query sql "SELECT rule.level FROM logs-* LIMIT 5"
+```
+
 ## Output format
 
 Every command that prints data takes `--format`, one of `yaml` (the default),

@@ -3,13 +3,11 @@
 
 """``osclient cluster``: cluster-level inspection."""
 
-import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
 from osclient.cli.io import add_format_argument, render
 from osclient.client import OpensearchClient
-from osclient.config import client_from_env
 
 NAME = "cluster"
 
@@ -42,10 +40,7 @@ def get_versions(client: OpensearchClient) -> dict[str, Any]:
     return versions
 
 
-def run(args: Namespace) -> None:
-    """Build the client from the environment and run the chosen operation."""
-    client = client_from_env()
-    if client is None:
-        sys.exit(2)
+def run(args: Namespace, client: OpensearchClient) -> None:
+    """Run the chosen operation against the client."""
     if args.operation == "versions":
         print(render(get_versions(client), args.format))

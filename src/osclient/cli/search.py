@@ -19,7 +19,7 @@ from osclient.cli.io import (
     emit,
     time_range_filter,
 )
-from osclient.config import client_from_env
+from osclient.client import OpensearchClient
 
 NAME = "search"
 
@@ -73,12 +73,8 @@ def build_term_search(terms: list[tuple[str, list[str]]], size: int) -> dict[str
     }
 
 
-def run(args: Namespace) -> None:
-    """Build the client from the environment and run the term search."""
-    client = client_from_env()
-    if client is None:
-        sys.exit(2)
-
+def run(args: Namespace, client: OpensearchClient) -> None:
+    """Run the term search against the client."""
     terms: list[tuple[str, list[str]]] = []
     for token in args.terms:
         if "=" not in token:
