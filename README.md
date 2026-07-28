@@ -38,9 +38,10 @@ Runtime dependencies: `requests`, `PyYAML`.
 ## Roadmap
 
 The client currently covers single-document and bulk indexing, search, SQL and
-PPL, counts, mappings, versions, index creation, reindex, update-by-query, and
-task polling, over a direct or dashboard-proxy transport with server-certificate
-verification. The following capabilities are planned but not yet implemented:
+PPL, counts, mappings, versions, index creation and lifecycle (refresh, delete,
+exists, list), reindex, update-by-query, and task polling, over a direct or
+dashboard-proxy transport with server-certificate verification. The following
+capabilities are planned but not yet implemented:
 
 ### Mutual TLS
 
@@ -52,16 +53,6 @@ that require clients to present a certificate.
 
 An optional pipeline name on the indexing operations (single and bulk), so
 documents are routed through a named ingest pipeline as they are written.
-
-### Index lifecycle helpers
-
-First-class methods for the common index-management operations currently reached
-only through `request`:
-
-- test whether an index exists;
-- refresh an index to make recent writes searchable;
-- delete an index;
-- resolve an index pattern to its most recently created concrete index.
 
 ### Index template management
 

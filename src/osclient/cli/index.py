@@ -1,7 +1,7 @@
 # Copyright 2026 Canonical Ltd.
 # See LICENSE file for licensing details.
 
-"""``osclient index``: index-level operations (mapping, bulk ingest)."""
+"""``osclient index``: index-level operations (mapping, bulk, lifecycle)."""
 
 import json
 import logging
@@ -61,6 +61,43 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
     )
     add_format_argument(bulk)
 
+    refresh = operations.add_parser(
+        "refresh", help="refresh an index so recent writes become searchable"
+    )
+    refresh.add_argument(
+        "--index", required=True, help="the index (or pattern) to refresh"
+    )
+    add_format_argument(refresh)
+
+    exists = operations.add_parser("exists", help="report whether an index exists")
+    exists.add_argument("--index", required=True, help="the index to test")
+    add_format_argument(exists)
+
+    delete = operations.add_parser(
+        "delete",
+        help="delete one index (--index) or every index matching a pattern "
+        "(--pattern); dry-run unless --apply",
+    )
+    target = delete.add_mutually_exclusive_group(required=True)
+    target.add_argument(
+        "--index", help="a single index to delete (must not contain a wildcard)"
+    )
+    target.add_argument(
+        "--pattern", help="delete every index matching this wildcard pattern"
+    )
+    delete.add_argument(
+        "--apply",
+        action="store_true",
+        help="actually delete; without it, only report what would be deleted",
+    )
+    add_format_argument(delete)
+
+    listing = operations.add_parser("list", help="list indices matching a pattern")
+    listing.add_argument(
+        "--pattern", default="*", help="index-name pattern to list (default: all)"
+    )
+    add_format_argument(listing)
+
 
 def _load_documents(text: str, input_format: str) -> list[dict[str, Any]]:
     """Parse the source text into a list of documents, or exit with an error.
@@ -91,6 +128,71 @@ def _load_documents(text: str, input_format: str) -> list[dict[str, Any]]:
     return documents
 
 
+def _delete_one(args: Namespace, client: OpensearchClient) -> None:
+    """Delete one concrete index; a wildcard here is a mistake (use --pattern)."""
+    if "*" in args.index:
+        logging.error(
+            f"--index {args.index!r} looks like a pattern; use --pattern to delete "
+            "several indices at once."
+        )
+        sys.exit(2)
+    if not args.apply:
+        # Dry run: name the target and its document count, as a safety readout.
+        count = client.count({"match_all": {}}, index=args.index)
+        summary = {
+            "index": args.index,
+            "dry_run": True,
+            "documents": count.data if count else None,
+        }
+        print(render(summary, args.format))
+        return
+    emit(client.delete_index(args.index), "Delete", args.format)
+
+
+def _delete_pattern(args: Namespace, client: OpensearchClient) -> None:
+    """Delete every index matching a pattern, resolving it to concrete names first.
+
+    Resolving up front means the dry run shows the exact blast radius, and each
+    delete targets a concrete name (never a wildcard the cluster might refuse).
+    """
+    listed = client.list_indices(args.pattern)
+    if not listed:
+        logging.error(f"could not list indices for {args.pattern!r}: {listed.reason}")
+        sys.exit(1)
+    names = listed.data
+    if not args.apply:
+        print(
+            render(
+                {"pattern": args.pattern, "matches": names, "dry_run": True},
+                args.format,
+            )
+        )
+        return
+    failures: list[dict[str, Any]] = []
+    for name in names:
+        res = client.delete_index(name)
+        if not res:
+            failures.append({"index": name, "reason": res.reason})
+    summary: dict[str, Any] = {
+        "pattern": args.pattern,
+        "deleted": len(names) - len(failures),
+        "failed": len(failures),
+    }
+    if failures:
+        summary["failures"] = failures
+    print(render(summary, args.format))
+    if failures:
+        sys.exit(1)
+
+
+def _run_delete(args: Namespace, client: OpensearchClient) -> None:
+    """Delete a single index (--index) or a pattern of indices (--pattern)."""
+    if args.index is not None:
+        _delete_one(args, client)
+    else:
+        _delete_pattern(args, client)
+
+
 def run(args: Namespace, client: OpensearchClient) -> None:
     """Run the chosen operation against the client."""
     if args.operation == "mapping":
@@ -108,3 +210,11 @@ def run(args: Namespace, client: OpensearchClient) -> None:
         if not result:
             logging.error(result.reason)
             sys.exit(1)
+    elif args.operation == "refresh":
+        emit(client.refresh(index=args.index), "Refresh", args.format)
+    elif args.operation == "exists":
+        emit(client.index_exists(args.index), "Exists", args.format)
+    elif args.operation == "delete":
+        _run_delete(args, client)
+    elif args.operation == "list":
+        emit(client.list_indices(args.pattern), "List", args.format)

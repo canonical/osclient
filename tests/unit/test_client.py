@@ -76,6 +76,14 @@ def test_helpers_build_the_expected_request() -> None:
             {"query": "source=x"},
         ),
         (lambda c: c.create_index({"m": 1}, index="i"), "PUT", "i", {"m": 1}),
+        (lambda c: c.refresh(index="i"), "POST", "i/_refresh", None),
+        (lambda c: c.delete_index("i"), "DELETE", "i", None),
+        (
+            lambda c: c.list_indices("x-*"),
+            "GET",
+            "_cat/indices/x-*?h=index&format=json",
+            None,
+        ),
         (
             lambda c: c.index_document(doc, index="i", refresh=True),
             "POST",
@@ -154,6 +162,20 @@ def test_read_helpers_propagate_a_failed_request() -> None:
     res = OpensearchClient(FakeTransport(Failure("500 boom"))).search({"q": 1})
     assert not res
     assert "500" in res.reason
+
+
+def test_index_exists_maps_200_and_404_and_propagates_other_errors() -> None:
+    assert OpensearchClient(FakeTransport(Success({}))).index_exists("i").data is True
+    missing = OpensearchClient(FakeTransport(Failure("no", status=404)))
+    assert missing.index_exists("i").data is False
+    err = OpensearchClient(FakeTransport(Failure("auth", status=401))).index_exists("i")
+    assert not err and err.status == 401  # a non-404 failure is not "does not exist"
+
+
+def test_list_indices_extracts_and_sorts_names() -> None:
+    rows = [{"index": "b-2"}, {"index": "a-1"}]
+    got = OpensearchClient(FakeTransport(Success(rows))).list_indices("x-*")
+    assert got.data == ["a-1", "b-2"]
 
 
 def test_pack_batches_bounds_by_bytes() -> None:

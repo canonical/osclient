@@ -365,6 +365,63 @@ class OpensearchClient:
         """Create an index with the given settings/mappings body (``PUT <index>``)."""
         return self.request("PUT", index or self.default_index, body)
 
+    def refresh(self, index: str | None = None) -> OpensearchResult[dict[str, Any]]:
+        """Refresh an index so its recent writes become searchable.
+
+        Args:
+            index: the index or pattern to refresh; defaults to the client's
+                configured index.
+
+        Returns:
+            The ``_refresh`` response (per-shard success counts).
+        """
+        return self.request("POST", f"{index or self.default_index}/_refresh")
+
+    def delete_index(self, index: str) -> OpensearchResult[dict[str, Any]]:
+        """Delete an index.
+
+        ``index`` is required (never defaulted), so a bare call cannot delete the
+        client's configured index by accident.
+
+        Args:
+            index: the index to delete.
+
+        Returns:
+            The delete acknowledgement.
+        """
+        return self.request("DELETE", index)
+
+    def index_exists(self, index: str) -> OpensearchResult[bool]:
+        """Report whether an index exists.
+
+        Args:
+            index: the index to test.
+
+        Returns:
+            True if the index exists, False if it does not (a 404). A non-404
+            failure (e.g. an auth error) is propagated unchanged.
+        """
+        res = self.request("GET", index)
+        if res:
+            return Success(True)
+        if res.status == 404:
+            return Success(False)
+        return res
+
+    def list_indices(self, pattern: str = "*") -> OpensearchResult[list[str]]:
+        """List the names of indices matching a pattern, sorted.
+
+        Args:
+            pattern: an index-name pattern (wildcards allowed); defaults to all.
+
+        Returns:
+            The matching index names, sorted.
+        """
+        res = self.get(f"_cat/indices/{pattern}?h=index&format=json")
+        if not res:
+            return res
+        return Success(sorted(row["index"] for row in res.data))
+
     def reindex(
         self,
         source: str,

@@ -143,6 +143,19 @@ def test_triage_workflow_eliminates_a_layer() -> None:
         assert entry["query"] == "rule.level < 3"
 
 
+def test_index_lifecycle_helpers() -> None:
+    index = _unique("osclient-func-lifecycle")
+    with _temporary_indices(index):
+        assert _client.create_index({}, index=index).ok
+        assert _client.index_exists(index).data is True
+        assert _client.index_document({"n": 1}, index=index).ok
+        assert _client.refresh(index=index).ok
+        listed = _client.list_indices("osclient-func-lifecycle-*")
+        assert listed and index in listed.data
+        assert _client.delete_index(index).ok
+        assert _client.index_exists(index).data is False
+
+
 def test_bulk_indexes_documents_across_batches() -> None:
     index = _unique("osclient-func-bulk")
     with _temporary_indices(index):

@@ -157,6 +157,25 @@ osclient index bulk @events.yaml  --index hunt-001 --input-format yaml
 osclient index bulk - --index hunt-001 --input-format json < events.json
 ```
 
+The lifecycle verbs cover the common index-management operations:
+
+- `refresh` makes recent writes searchable (a write followed immediately by a
+  query otherwise returns nothing).
+- `exists` reports whether an index exists.
+- `list` lists indices matching `--pattern` (default: all).
+- `delete` removes indices, and is a dry run unless `--apply`. `--index` deletes
+  one concrete index, while `--pattern` deletes every matching index. The
+  pattern dry run lists exactly which indices would be deleted.
+
+```
+osclient index refresh --index hunt-001
+osclient index exists  --index hunt-001
+osclient index list --pattern "triage-*"
+osclient index delete  --index hunt-001 --apply
+osclient index delete  --pattern "scratch-*"          # dry run: lists the matches
+osclient index delete  --pattern "scratch-*" --apply
+```
+
 ## `osclient cluster`
 
 `cluster` groups cluster-level inspection. `versions` reports the OpenSearch and
