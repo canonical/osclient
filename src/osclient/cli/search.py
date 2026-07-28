@@ -13,6 +13,7 @@ import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
+from osclient.cli.diagnostics import diagnose
 from osclient.cli.io import (
     add_format_argument,
     add_time_range_arguments,
@@ -46,6 +47,10 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         action="store_true",
         help="print only the number of matching documents (via _count)",
     )
+    parser.add_argument(
+        "--index",
+        help="index or pattern to search (default: the configured OPENSEARCH_INDEX)",
+    )
     add_time_range_arguments(parser)
     add_format_argument(parser)
 
@@ -73,6 +78,34 @@ def build_term_search(terms: list[tuple[str, list[str]]], size: int) -> dict[str
     }
 
 
+def _unmapped_fields(
+    client: OpensearchClient, fields: list[str], index: str | None
+) -> list[str]:
+    """Return the term fields that are absent from the index mapping.
+
+    An unmapped field never matches a term filter (though it may sit in _source), a
+    common and confusing cause of an empty result. A field whose mapping cannot be
+    read is treated as mapped, so the caller never warns on a guess.
+
+    Args:
+        client: used to look up each field's mapping.
+        fields: the term field names to check.
+        index: index or pattern to check the mapping in (None uses the default).
+
+    Returns:
+        The subset of ``fields`` that are confidently unmapped.
+    """
+    unmapped: list[str] = []
+    for field in fields:
+        res = client.field_mapping(field, index=index)
+        if not res or not res.data:
+            continue  # cannot read the mapping; do not guess
+        # field_mapping returns {index: {"mappings": {field: {...}}}}; empty = unmapped.
+        if not any(body.get("mappings") for body in res.data.values()):
+            unmapped.append(field)
+    return unmapped
+
+
 def run(args: Namespace, client: OpensearchClient) -> None:
     """Run the term search against the client."""
     terms: list[tuple[str, list[str]]] = []
@@ -89,6 +122,18 @@ def run(args: Namespace, client: OpensearchClient) -> None:
         body["query"]["bool"]["filter"].append(time_filter)
 
     if args.count_only:
-        emit(client.count(body["query"]), "Count", args.format)
+        result = client.count(body["query"], index=args.index)
+        label, empty = "Count", bool(result) and result.data == 0
     else:
-        emit(client.search(body), "Search", args.format)
+        result = client.search(body, index=args.index)
+        label, empty = "Search", bool(result) and not result.data
+
+    if empty:
+        unmapped = _unmapped_fields(client, [field for field, _ in terms], args.index)
+        if unmapped:
+            logging.warning(
+                "no matches: %s not mapped, so a term filter never matches them "
+                "(they may still be in _source); check `osclient index mapping ...`",
+                ", ".join(repr(field) for field in unmapped),
+            )
+    emit(diagnose(result), label, args.format)

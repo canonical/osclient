@@ -124,13 +124,17 @@ def test_a_bodyless_request_sends_no_content_type() -> None:
     assert session.calls[0]["headers"] == {}
 
 
-def test_http_error_failure_carries_the_status_code() -> None:
+def test_http_error_failure_carries_status_and_error_body() -> None:
     transport = DirectTransport("https://h:9200", ("u", "p"), True)
-    _stub(transport, FakeResponse(413, None, text="too large"))
-    assert transport.request("POST", "_bulk", b"x").status == 413
-    # A transport error is not an HTTP status.
+    body = {"error": {"type": "index_not_found_exception"}, "status": 404}
+    _stub(transport, FakeResponse(404, body, text="nope"))
+    res = transport.request("GET", "missing")
+    assert res.status == 404
+    assert res.data == body  # the parsed error response body
+    # A transport error carries neither a status nor a body.
     _stub(transport, requests.ConnectionError("down"))
-    assert transport.request("GET", "x").status is None
+    down = transport.request("GET", "x")
+    assert down.status is None and down.data is None
 
 
 def _failover(primary: Any, fallback: Any) -> tuple:

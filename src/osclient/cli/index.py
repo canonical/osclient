@@ -11,6 +11,7 @@ from typing import Any
 
 import yaml
 
+from osclient.cli.diagnostics import diagnose
 from osclient.cli.io import add_format_argument, emit, render, resolve_source
 from osclient.client import OpensearchClient
 
@@ -146,7 +147,7 @@ def _delete_one(args: Namespace, client: OpensearchClient) -> None:
         }
         print(render(summary, args.format))
         return
-    emit(client.delete_index(args.index), "Delete", args.format)
+    emit(diagnose(client.delete_index(args.index)), "Delete", args.format)
 
 
 def _delete_pattern(args: Namespace, client: OpensearchClient) -> None:
@@ -196,11 +197,8 @@ def _run_delete(args: Namespace, client: OpensearchClient) -> None:
 def run(args: Namespace, client: OpensearchClient) -> None:
     """Run the chosen operation against the client."""
     if args.operation == "mapping":
-        emit(
-            client.field_mapping(args.field, index=args.index),
-            "Field mapping",
-            args.format,
-        )
+        result = client.field_mapping(args.field, index=args.index)
+        emit(diagnose(result), "Field mapping", args.format)
     elif args.operation == "bulk":
         documents = _load_documents(resolve_source(args.source), args.input_format)
         result = client.bulk(documents, index=args.index)
@@ -211,10 +209,10 @@ def run(args: Namespace, client: OpensearchClient) -> None:
             logging.error(result.reason)
             sys.exit(1)
     elif args.operation == "refresh":
-        emit(client.refresh(index=args.index), "Refresh", args.format)
+        emit(diagnose(client.refresh(index=args.index)), "Refresh", args.format)
     elif args.operation == "exists":
-        emit(client.index_exists(args.index), "Exists", args.format)
+        emit(diagnose(client.index_exists(args.index)), "Exists", args.format)
     elif args.operation == "delete":
         _run_delete(args, client)
     elif args.operation == "list":
-        emit(client.list_indices(args.pattern), "List", args.format)
+        emit(diagnose(client.list_indices(args.pattern)), "List", args.format)

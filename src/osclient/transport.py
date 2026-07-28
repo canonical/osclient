@@ -55,8 +55,13 @@ def _result_from_response(
 ) -> OpensearchResult[Any]:
     """Turn a received HTTP response into a result (non-ok status is a value)."""
     if not response.ok:
+        try:
+            body = response.json()
+        except ValueError:
+            body = None  # a non-JSON error body (e.g. an HTML proxy page)
         return Failure(
             f"{response.status_code} from {method} {path}: {response.text}",
+            data=body,
             status=response.status_code,
         )
     try:

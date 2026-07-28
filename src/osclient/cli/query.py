@@ -21,6 +21,7 @@ import sys
 from argparse import Namespace, _SubParsersAction
 from typing import Any
 
+from osclient.cli.diagnostics import diagnose
 from osclient.cli.io import (
     add_format_argument,
     add_time_range_arguments,
@@ -141,18 +142,21 @@ def _run_sql(client: OpensearchClient, args: Namespace) -> None:
     text = resolve_source(args.query)
     if args.explain:
         _reject_time_with_explain(args)
-        emit(client.explain(text), "Explain", args.format)
+        emit(diagnose(client.explain(text)), "Explain", args.format)
     else:
-        emit(client.sql(text, time_range_filter(args)), "SQL query", args.format)
+        result = client.sql(text, time_range_filter(args))
+        emit(diagnose(result), "SQL query", args.format)
 
 
 def _run_ppl(client: OpensearchClient, args: Namespace) -> None:
     text = resolve_source(args.query)
     if args.explain:
         _reject_time_with_explain(args)
-        emit(client.explain(text, query_type="ppl"), "PPL explain", args.format)
+        result = client.explain(text, query_type="ppl")
+        emit(diagnose(result), "PPL explain", args.format)
     else:
-        emit(client.ppl(_ppl_with_time(text, args)), "PPL query", args.format)
+        result = client.ppl(_ppl_with_time(text, args))
+        emit(diagnose(result), "PPL query", args.format)
 
 
 def _run_dsl(client: OpensearchClient, args: Namespace) -> None:
@@ -160,11 +164,11 @@ def _run_dsl(client: OpensearchClient, args: Namespace) -> None:
     time_filter = time_range_filter(args)
     if args.count_only:
         query = _with_time_filter(_query_from_dsl(parsed), time_filter)
-        emit(client.count(query), "Count", args.format)
+        emit(diagnose(client.count(query)), "Count", args.format)
     else:
         body = _search_body_from_dsl(parsed)
         body["query"] = _with_time_filter(body["query"], time_filter)
-        emit(client.search(body), "DSL query", args.format)
+        emit(diagnose(client.search(body)), "DSL query", args.format)
 
 
 def run(args: Namespace, client: OpensearchClient) -> None:

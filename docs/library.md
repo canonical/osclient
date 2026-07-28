@@ -2,13 +2,11 @@
 
 ## Return types
 
-Every call returns an `OpensearchResult` (`ok` / `data` / `reason` / `status`)
-rather than raising. An HTTP error, transport error, or bad response body comes
-back as a failure with a reason. `OpensearchResult` is a union of `Success`
-(carrying `data`) and `Failure` (carrying `reason`), but reads as one type.
-`status` is the HTTP status code when one is known (set on an HTTP-error
-failure, e.g. `413`), else `None`. A failure's `data` is normally `None`, but a
-call that produced a partial result may include metadata here.
+Every call returns an `OpensearchResult` rather than raising. Each is a
+`Success` or a `Failure`, read as one union type with the fields `ok` / `data` /
+`reason` / `status`. An HTTP error, transport error, or bad response body comes
+back as a `Failure` with a `reason`. For each field's exact meaning, see the
+`Success` and `Failure` docstrings in `osclient.result`.
 
 A result is truthy when it succeeded, so `if res:` (or `if not res:`,
 `assert res`) both branches and narrows `data` to be present:

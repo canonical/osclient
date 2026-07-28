@@ -124,11 +124,13 @@ osclient query dsl @rule.json --count-only
 
 `search` finds the newest documents matching a set of exact `field=value` terms,
 ANDed together, most recent first. `--count` controls how many are returned;
-`--count-only` prints just the number of matches (via `_count`):
+`--count-only` prints just the number of matches (via `_count`). `--index`
+overrides the configured `OPENSEARCH_INDEX` for the search.
 
 ```
 osclient search rule.id=5710 agent.name=web01 --count 3
 osclient search source.ip=10.0.0.5 --count-only
+osclient search source.ip=10.0.0.5 --index logs-2026.07.14
 ```
 
 ## `osclient index`

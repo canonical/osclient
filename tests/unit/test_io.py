@@ -13,7 +13,12 @@ from datetime import datetime, timezone
 
 import yaml
 
-from osclient.cli.io import render, resolve_source, resolve_time, time_range_filter
+from osclient.cli.io import (
+    render,
+    resolve_source,
+    resolve_time,
+    time_range_filter,
+)
 
 
 def _args(since=None, until=None, time_field="@timestamp") -> Namespace:

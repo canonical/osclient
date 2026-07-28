@@ -16,6 +16,7 @@ import sys
 from argparse import Namespace, _SubParsersAction
 
 from osclient import triage
+from osclient.cli.diagnostics import diagnose
 from osclient.cli.io import add_format_argument, render, resolve_source
 from osclient.client import OpensearchClient
 
@@ -116,7 +117,7 @@ def run(args: Namespace, client: OpensearchClient) -> None:
     """Run the chosen triage verb against the client."""
     if getattr(args, "where", None) is not None:
         args.where = resolve_source(args.where)
-    result = triage.run(args, client)
+    result = diagnose(triage.run(args, client))
     if not result.ok:
         print(f"error: {args.command} failed: {result.reason}", file=sys.stderr)
         sys.exit(1)

@@ -4,15 +4,13 @@
 """The typed result every osclient call returns.
 
 A call returns either a :class:`Success` carrying ``data`` or a :class:`Failure`
-carrying a ``reason``; :data:`OpensearchResult` is the union of the two. Both
-variants expose ``ok`` / ``data`` / ``reason`` / ``status``, so a result reads as
-a single type. A failure's ``data`` is usually None, but a call that produced a
-partial result may include data. ``status`` is the HTTP status code when one is
-known (set on an HTTP-error failure), else None. A result is truthy when it
-succeeded, so ``if res:`` (or ``if not res:``, ``assert res``) both branches
-and narrows ``data`` to be present; you can also pattern-match on ``Success`` /
-``Failure``. An expected failure (HTTP error, transport error, bad JSON) is a
-value here, not a raised exception.
+carrying a ``reason``; :data:`OpensearchResult` is the union of the two, and both
+expose ``ok`` / ``data`` / ``reason`` / ``status`` so a result reads as a single
+type (each field's meaning is documented on the two classes). A result is truthy
+when it succeeded, so ``if res:`` (or ``if not res:``, ``assert res``) both
+branches and narrows ``data`` to be present; you can also pattern-match on
+``Success`` / ``Failure``. An expected failure (HTTP error, transport error, bad
+JSON) is a value here, not a raised exception.
 """
 
 from dataclasses import dataclass
@@ -23,7 +21,12 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class Success(Generic[T]):
-    """A call that succeeded; ``data`` holds the processed result."""
+    """A call that succeeded; ``data`` holds the result payload of type ``T``.
+
+    For a single request, ``data`` contains response data (a processed response
+    body); a multi-request operation such as ``bulk`` may store a summary here
+    instead.
+    """
 
     data: T
     ok: Literal[True] = True
@@ -38,9 +41,12 @@ class Success(Generic[T]):
 class Failure:
     """A call that failed; ``reason`` explains why.
 
-    ``data`` is usually None, but a call that produced a partial result may carry it.
-    ``status`` is the HTTP status code for an HTTP-error failure (e.g. 413, 503), or
-    None for a non-HTTP failure such as a transport error or bad JSON.
+    ``data`` carries a payload when the failed operation has one: the parsed
+    error response body when the server returned one (e.g. ``{"error":
+    {"type": "index_not_found_exception", ...}}``), or a composed operation's
+    partial summary (e.g. ``bulk``'s). ``status`` is the HTTP status code for
+    an HTTP-error failure (e.g. 413, 503), or None for a non-HTTP failure such
+    as a transport error or bad JSON.
     """
 
     reason: str
