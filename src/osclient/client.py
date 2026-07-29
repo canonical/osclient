@@ -365,6 +365,52 @@ class OpensearchClient:
         """Create an index with the given settings/mappings body (``PUT <index>``)."""
         return self.request("PUT", index or self.default_index, body)
 
+    def put_mapping(
+        self, mapping: dict[str, Any], index: str | None = None
+    ) -> OpensearchResult[dict[str, Any]]:
+        """Add or update field mappings on an existing index (``PUT <index>/_mapping``).
+
+        OpenSearch can add new fields but cannot change an existing field's type; a
+        conflicting change comes back as a failure.
+
+        Args:
+            mapping: the mappings body, e.g.
+                ``{"properties": {"source.ip": {"type": "ip"}}}``.
+            index: the index (or pattern) to update; defaults to the configured index.
+
+        Returns:
+            The put-mapping acknowledgement.
+        """
+        return self.request("PUT", f"{index or self.default_index}/_mapping", mapping)
+
+    def get_pipeline(self, name: str | None = None) -> OpensearchResult[dict[str, Any]]:
+        """Get ingest pipelines: all of them, or one by name.
+
+        Args:
+            name: the pipeline to fetch; None fetches every pipeline
+                (``GET _ingest/pipeline`` vs ``GET _ingest/pipeline/<name>``).
+
+        Returns:
+            The pipeline definitions keyed by name.
+        """
+        path = "_ingest/pipeline" if name is None else f"_ingest/pipeline/{name}"
+        return self.request("GET", path)
+
+    def put_pipeline(
+        self, name: str, body: dict[str, Any]
+    ) -> OpensearchResult[dict[str, Any]]:
+        """Create or replace a named ingest pipeline (``PUT _ingest/pipeline/<name>``).
+
+        Args:
+            name: the pipeline name.
+            body: the pipeline definition, e.g.
+                ``{"description": "...", "processors": [...]}``.
+
+        Returns:
+            The put-pipeline acknowledgement.
+        """
+        return self.request("PUT", f"_ingest/pipeline/{name}", body)
+
     def refresh(self, index: str | None = None) -> OpensearchResult[dict[str, Any]]:
         """Refresh an index so its recent writes become searchable.
 

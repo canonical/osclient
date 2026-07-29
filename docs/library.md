@@ -46,10 +46,10 @@ method returns an `OpensearchResult`.
 - Reads: `get(path)`, `search(query)`, `search_raw(query)` (full response, with
   aggregations), `count(query)`, `sql(q)`, `sql_raw(q)` (raw jdbc), `ppl(q)`,
   `explain(q)`, `get_mapping()`, `field_mapping(field)`, `opensearch_version()`,
-  `plugin_versions()`.
+  `plugin_versions()`, `get_pipeline(name=None)`.
 - Writes / admin: `index_document(document)`, `bulk(documents)`,
-  `create_index(body)`, `reindex(source, dest)`, `update_by_query(query)`,
-  `get_task(task_id)`.
+  `create_index(body)`, `put_mapping(mapping)`, `put_pipeline(name, body)`,
+  `reindex(source, dest)`, `update_by_query(query)`, `get_task(task_id)`.
 
 `bulk(documents, index=None, *, action="index", max_bytes=..., max_retries=3)`
 writes many documents through the `_bulk` API. It serializes them to

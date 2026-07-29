@@ -76,6 +76,20 @@ def test_helpers_build_the_expected_request() -> None:
             {"query": "source=x"},
         ),
         (lambda c: c.create_index({"m": 1}, index="i"), "PUT", "i", {"m": 1}),
+        (
+            lambda c: c.put_mapping({"properties": {"f": {"type": "ip"}}}, index="i"),
+            "PUT",
+            "i/_mapping",
+            {"properties": {"f": {"type": "ip"}}},
+        ),
+        (lambda c: c.get_pipeline(), "GET", "_ingest/pipeline", None),
+        (lambda c: c.get_pipeline("web"), "GET", "_ingest/pipeline/web", None),
+        (
+            lambda c: c.put_pipeline("web", {"processors": []}),
+            "PUT",
+            "_ingest/pipeline/web",
+            {"processors": []},
+        ),
         (lambda c: c.refresh(index="i"), "POST", "i/_refresh", None),
         (lambda c: c.delete_index("i"), "DELETE", "i", None),
         (

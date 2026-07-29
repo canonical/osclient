@@ -146,6 +146,16 @@ osclient index mapping "data.event.*"
 osclient index mapping source.ip --index logs-2026.07.14
 ```
 
+`create` makes a new index from a settings/mappings body, and `set mapping` adds
+or updates field mappings on an existing one (OpenSearch can add new fields but
+not change an existing field's type). Both read the JSON body from `SOURCE`
+(`@PATH`, `-`, or literal).
+
+```
+osclient index create hunt-001 @index-body.json
+osclient index set mapping @mapping.json --index hunt-001
+```
+
 `bulk` writes many documents into `--index` in one pass. `SOURCE` is the
 documents, given as `@PATH` (a file), `-` (stdin), or literally, and
 `--input-format` says how to read it: `json` (an array of objects), `jsonl` (one
@@ -180,11 +190,21 @@ osclient index delete  --pattern "scratch-*" --apply
 
 ## `osclient cluster`
 
-`cluster` groups cluster-level inspection. `versions` reports the OpenSearch and
-installed-plugin versions:
+`cluster` groups cluster-level inspection and configuration. `versions` reports
+the OpenSearch and installed-plugin versions:
 
 ```
 osclient cluster versions
+```
+
+`pipeline` shows ingest pipelines (all, or one by name), and `set pipeline`
+creates or replaces one from a JSON definition read from `SOURCE` (`@PATH`, `-`,
+or literal).
+
+```
+osclient cluster pipeline
+osclient cluster pipeline web-logs
+osclient cluster set pipeline web-logs @pipeline.json
 ```
 
 ## `osclient triage`

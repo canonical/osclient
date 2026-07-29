@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import yaml
 
 from osclient.cli.io import (
+    parse_json_object,
     render,
     resolve_source,
     resolve_time,
@@ -27,6 +28,13 @@ def _args(since=None, until=None, time_field="@timestamp") -> Namespace:
 
 def test_resolve_source_returns_a_literal_value_unchanged() -> None:
     assert resolve_source("`f` = 'v'") == "`f` = 'v'"
+
+
+def test_parse_json_object_returns_none_on_bad_or_non_object_input() -> None:
+    assert parse_json_object('{"a": 1}', "body") == {"a": 1}
+    # A non-object (a list) and invalid JSON both return None, not exit.
+    assert parse_json_object("[1, 2]", "body") is None
+    assert parse_json_object("{not json", "body") is None
 
 
 def test_resolve_source_reads_and_strips_an_at_prefixed_file() -> None:

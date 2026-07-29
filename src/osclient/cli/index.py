@@ -12,7 +12,13 @@ from typing import Any
 import yaml
 
 from osclient.cli.diagnostics import diagnose
-from osclient.cli.io import add_format_argument, emit, render, resolve_source
+from osclient.cli.io import (
+    add_format_argument,
+    emit,
+    parse_json_object,
+    render,
+    resolve_source,
+)
 from osclient.client import OpensearchClient
 
 NAME = "index"
@@ -38,6 +44,42 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
         help="index or pattern to inspect (default: the configured OPENSEARCH_INDEX)",
     )
     add_format_argument(mapping)
+
+    create = operations.add_parser(
+        "create",
+        help="create an index from a settings/mappings body",
+        epilog="SOURCE is the index body as JSON: '@PATH' reads a file, '-' reads "
+        "stdin, or give the text literally.",
+    )
+    create.add_argument(
+        "index",
+        metavar="NAME",
+        help="the index to create (must not already exist)",
+    )
+    create.add_argument(
+        "source",
+        metavar="SOURCE",
+        help="the index body as JSON ('@PATH' for a file, '-' for stdin, or literal)",
+    )
+    add_format_argument(create)
+
+    set_parser = operations.add_parser(
+        "set", help="set a configurable part of an index (e.g. its mapping)"
+    )
+    set_targets = set_parser.add_subparsers(dest="set_target", required=True)
+    set_mapping = set_targets.add_parser(
+        "mapping",
+        help="add or update field mappings on an existing index",
+        epilog="SOURCE is the mappings body as JSON: '@PATH' reads a file, '-' reads "
+        "stdin, or give the text literally.",
+    )
+    set_mapping.add_argument(
+        "source",
+        metavar="SOURCE",
+        help="the mappings body as JSON ('@PATH' for a file, '-' for stdin, or literal)",
+    )
+    set_mapping.add_argument("--index", required=True, help="the index to update")
+    add_format_argument(set_mapping)
 
     bulk = operations.add_parser(
         "bulk",
@@ -199,6 +241,18 @@ def run(args: Namespace, client: OpensearchClient) -> None:
     if args.operation == "mapping":
         result = client.field_mapping(args.field, index=args.index)
         emit(diagnose(result), "Field mapping", args.format)
+    elif args.operation == "create":
+        body = parse_json_object(resolve_source(args.source), "index body")
+        if body is None:
+            sys.exit(2)
+        result = client.create_index(body, index=args.index)
+        emit(diagnose(result), "Create", args.format)
+    elif args.operation == "set" and args.set_target == "mapping":
+        body = parse_json_object(resolve_source(args.source), "mappings body")
+        if body is None:
+            sys.exit(2)
+        result = client.put_mapping(body, index=args.index)
+        emit(diagnose(result), "Set mapping", args.format)
     elif args.operation == "bulk":
         documents = _load_documents(resolve_source(args.source), args.input_format)
         result = client.bulk(documents, index=args.index)

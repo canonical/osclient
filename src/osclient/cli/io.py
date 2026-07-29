@@ -64,6 +64,29 @@ def resolve_source(value: str) -> str:
     return value
 
 
+def parse_json_object(text: str, label: str) -> dict[str, Any] | None:
+    """Parse text into a JSON object, logging an instructive error on failure.
+
+    Args:
+        text: the JSON text to parse (typically from :func:`resolve_source`).
+        label: a short noun naming the input for the error message (e.g.
+            ``"mappings body"``).
+
+    Returns:
+        The parsed object, or None when the text is not a JSON object. The reason
+        is logged; the caller decides how to handle it (e.g. exit).
+    """
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as error:
+        logging.error(f"{label} is not valid JSON: {error}")
+        return None
+    if not isinstance(parsed, dict):
+        logging.error(f"{label} must be a JSON object")
+        return None
+    return parsed
+
+
 def add_time_range_arguments(parser: ArgumentParser) -> None:
     """Add the shared ``--since`` / ``--until`` / ``--time-field`` time-scoping options."""
     parser.add_argument(
