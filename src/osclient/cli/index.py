@@ -36,8 +36,12 @@ def add_subparser(subparsers: _SubParsersAction) -> None:
     )
     mapping.add_argument(
         "field",
+        nargs="?",
         metavar="FIELD",
-        help="field name(s), comma-separated, wildcards allowed",
+        help=(
+            "(Optional) comma-separated field name(s), wildcards allowed. "
+            "Omit to retrieve entire mapping."
+        ),
     )
     mapping.add_argument(
         "--index",
@@ -239,7 +243,10 @@ def _run_delete(args: Namespace, client: OpensearchClient) -> None:
 def run(args: Namespace, client: OpensearchClient) -> None:
     """Run the chosen operation against the client."""
     if args.operation == "mapping":
-        result = client.field_mapping(args.field, index=args.index)
+        if args.field:
+            result = client.field_mapping(args.field, index=args.index)
+        else:
+            result = client.get_mapping(index=args.index)
         emit(diagnose(result), "Field mapping", args.format)
     elif args.operation == "create":
         body = parse_json_object(resolve_source(args.source), "index body")
