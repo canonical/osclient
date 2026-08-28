@@ -1,0 +1,33 @@
+name: Tox checks
+
+on:
+  pull_request:
+    branches:
+      - 'main'
+
+permissions:
+  checks: write
+  contents: read
+
+jobs:
+  lint:
+    name: lint checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@c2d88d3ecc89a9ef08eebf45d9637801dcee7eb5
+
+      - name: Install tox
+        run: |
+          sudo apt install -y pipx
+          pipx install tox
+          export PATH="${PATH}:${HOME}/.local/bin"
+
+      - name: Run code linting checks
+        run: tox run -e lint
+
+      - name: Run type checks
+        run: tox run -e type
+
+      - name: Run unit tests
+        run: tox run -e unit
