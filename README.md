@@ -13,7 +13,7 @@ python3 -m pip install -e .
 or
 
 ```
-pipx install https://github.com/canonical/osclient.git
+pipx install git+https://github.com/canonical/osclient.git
 ```
 
 Runtime dependencies: `requests`, `PyYAML`.
